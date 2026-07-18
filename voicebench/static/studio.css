@@ -1,0 +1,258 @@
+.studio-composer {
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 18px;
+  padding: 30px;
+  border: 1px solid #d9d2c5;
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 92% 5%, rgba(217, 77, 43, .13), transparent 28%),
+    linear-gradient(145deg, #fffdf8 0%, #f7f1e6 100%);
+  box-shadow: 0 24px 70px rgba(45, 38, 27, .11);
+}
+
+.studio-status-row,
+.voice-identity,
+.composer-footer,
+.composer-meta,
+.composer-actions,
+.studio-result-main,
+.studio-result-actions {
+  display: flex;
+  align-items: center;
+}
+
+.studio-status-row,
+.composer-footer {
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.voice-identity {
+  gap: 11px;
+}
+
+.voice-identity small,
+.voice-identity strong {
+  display: block;
+}
+
+.voice-identity small {
+  margin-bottom: 3px;
+  color: #8a857a;
+  font: 700 9px ui-monospace, monospace;
+  letter-spacing: .12em;
+}
+
+.voice-identity strong {
+  font-size: 13px;
+}
+
+.voice-orb {
+  width: 34px;
+  height: 34px;
+  border: 7px solid rgba(217, 77, 43, .16);
+  border-radius: 50%;
+  background: #d94d2b;
+  box-shadow: 0 0 0 1px rgba(217, 77, 43, .18), 0 8px 22px rgba(217, 77, 43, .2);
+}
+
+.studio-copy {
+  max-width: 760px;
+  margin: 42px 0 22px;
+}
+
+.studio-copy h2 {
+  margin: 0;
+  font-family: Georgia, "Noto Serif KR", serif;
+  font-size: clamp(28px, 4vw, 48px);
+  font-weight: 500;
+  letter-spacing: -.035em;
+  line-height: 1.15;
+}
+
+.studio-copy > p:last-child {
+  margin: 13px 0 0;
+  color: #706c64;
+  font-size: 13px;
+}
+
+#studio-form {
+  padding: 10px;
+  border: 1px solid #d8d0c2;
+  border-radius: 17px;
+  background: rgba(255, 255, 255, .82);
+  box-shadow: inset 0 1px 0 white;
+}
+
+#studio-text {
+  width: 100%;
+  min-height: 220px;
+  padding: 18px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-size: 17px;
+  line-height: 1.8;
+}
+
+#studio-text::placeholder {
+  color: #aaa398;
+}
+
+.composer-footer {
+  padding: 10px 10px 3px;
+  border-top: 1px solid #eee8dd;
+}
+
+.composer-meta,
+.composer-actions {
+  gap: 13px;
+}
+
+.composer-meta {
+  color: #8a857b;
+  font: 700 10px ui-monospace, monospace;
+}
+
+.composer-actions label {
+  color: #777269;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.composer-actions input {
+  width: 72px;
+  margin-left: 6px;
+  padding: 9px;
+}
+
+#studio-generate {
+  min-width: 130px;
+  padding: 13px 18px;
+  font-size: 13px;
+}
+
+.studio-note {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 14px 4px 0;
+  color: #777269;
+  font-size: 11px;
+}
+
+.studio-note span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2d7557;
+  box-shadow: 0 0 0 4px rgba(45, 117, 87, .1);
+}
+
+.studio-active .progress-track {
+  margin-top: 4px;
+}
+
+.studio-history {
+  display: grid;
+  gap: 10px;
+}
+
+.studio-result {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  padding: 15px 16px;
+  border: 1px solid #e2dccf;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.studio-result-main {
+  min-width: 0;
+  gap: 13px;
+}
+
+.studio-result-index {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: #f0e9dd;
+  color: #d94d2b;
+  font: 800 10px ui-monospace, monospace;
+}
+
+.studio-result-copy {
+  min-width: 0;
+}
+
+.studio-result-copy strong,
+.studio-result-copy small {
+  display: block;
+}
+
+.studio-result-copy strong {
+  overflow: hidden;
+  margin-bottom: 5px;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-result-copy small {
+  color: #89847b;
+  font-size: 10px;
+}
+
+.studio-result-actions {
+  gap: 8px;
+}
+
+.studio-result audio {
+  width: 260px;
+  height: 34px;
+}
+
+.download-button {
+  border-radius: 9px;
+  padding: 10px 12px;
+  background: #24241f;
+  color: white;
+  font-size: 11px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.studio-error {
+  max-width: 360px;
+  color: #a9361d;
+  font-size: 11px;
+}
+
+.sr-only {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 760px) {
+  .studio-composer { padding: 20px; }
+  .studio-copy { margin-top: 30px; }
+  #studio-text { min-height: 180px; font-size: 15px; }
+  .composer-footer, .studio-result { align-items: stretch; flex-direction: column; grid-template-columns: 1fr; }
+  .composer-meta { display: none; }
+  .composer-actions { justify-content: space-between; }
+  .studio-result-actions { flex-wrap: wrap; }
+  .studio-result audio { width: 100%; }
+}

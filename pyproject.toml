@@ -1,0 +1,12 @@
+[project]
+name = "voicebench"
+version = "0.1.0"
+description = "Local, reproducible voice-cloning TTS benchmark harness"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+voicebench = "voicebench.__main__:main"
+
+[tool.unittest]
+start-directory = "tests"

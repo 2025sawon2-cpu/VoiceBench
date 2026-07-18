@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VoiceBench</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/reference.css">
+  <link rel="stylesheet" href="/studio.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">V</span><div><strong>VoiceBench</strong><small>Local quality lab</small></div></div>
+      <nav>
+        <button class="nav-item active" data-view="studio"><span>01</span> TTS 스튜디오</button>
+        <button class="nav-item" data-view="workspace"><span>02</span> 벤치마크</button>
+        <button class="nav-item" data-view="review"><span>03</span> 블라인드 비교</button>
+        <button class="nav-item" data-view="engines"><span>04</span> 엔진 설정</button>
+      </nav>
+      <div class="privacy-note"><span class="status-dot"></span><div><strong>완전 로컬</strong><small>파일을 외부로 전송하지 않습니다.</small></div></div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div><p class="eyebrow">PRIVATE LOCAL VOICE STUDIO</p><h1 id="page-title">내 목소리 TTS</h1></div>
+        <div id="hardware-pill" class="hardware-pill">하드웨어 확인 중</div>
+      </header>
+
+      <section id="flash" class="flash hidden"></section>
+
+      <section id="studio-view" class="view active">
+        <article class="studio-composer">
+          <div class="studio-status-row">
+            <div class="voice-identity"><span class="voice-orb"></span><div><small>SELECTED VOICE</small><strong id="studio-voice-name">내 목소리 준비 중</strong></div></div>
+            <span id="studio-engine-state" class="tag muted">엔진 확인 중</span>
+          </div>
+          <div class="studio-copy">
+            <p class="eyebrow">SCRIPT TO SPEECH</p>
+            <h2>내 목소리로 읽을 대본을 입력하세요.</h2>
+            <p>긴 대본은 안전한 길이로 나눈 뒤 자연스러운 간격을 넣어 하나의 WAV로 완성합니다.</p>
+          </div>
+          <form id="studio-form">
+            <label for="studio-text" class="sr-only">합성할 대본</label>
+            <textarea id="studio-text" placeholder="예: 안녕하세요. 오늘은 새로운 이야기를 들려드리겠습니다." required></textarea>
+            <div class="composer-footer">
+              <div class="composer-meta"><span id="studio-char-count">0자</span><span id="studio-segment-estimate">예상 0조각</span></div>
+              <div class="composer-actions"><label>Seed <input id="studio-seed" type="number" value="10" min="0" max="2147483647"></label><button id="studio-generate" class="primary" type="submit">음성 만들기</button></div>
+            </div>
+          </form>
+          <p class="studio-note"><span></span>음성은 이 PC 안에서만 처리됩니다. 첫 생성은 모델을 올리는 데 시간이 걸리고, 이후 생성은 더 빨라집니다.</p>
+        </article>
+
+        <article id="studio-active" class="card studio-active hidden">
+          <div class="card-heading"><div><span class="step">●</span><h2>음성을 만들고 있습니다</h2></div><span id="studio-active-state" class="tag">대기</span></div>
+          <div class="progress-track"><span id="studio-progress-bar"></span></div>
+          <p id="studio-progress-label" class="support">작업을 준비하고 있습니다.</p>
+        </article>
+
+        <article class="card studio-history-card">
+          <div class="card-heading"><div><span class="step">H</span><h2>최근 생성 결과</h2></div><button id="studio-refresh" class="ghost">새로고침</button></div>
+          <div id="studio-history" class="studio-history empty-state">아직 생성한 음성이 없습니다.</div>
+        </article>
+      </section>
+
+      <section id="workspace-view" class="view">
+        <div class="grid two">
+          <article class="card project-card">
+            <div class="card-heading"><div><span class="step">A</span><h2>프로젝트</h2></div><button id="new-project-button" class="ghost">새 프로젝트</button></div>
+            <div id="project-list" class="project-list empty-state">프로젝트가 없습니다.</div>
+          </article>
+          <article class="card reference-card">
+            <div class="card-heading"><div><span class="step">B</span><h2>레퍼런스 음성</h2></div><span id="reference-state" class="tag muted">미등록</span></div>
+            <p class="support">같은 마이크와 공간에서 녹음한 깨끗한 WAV 원본을 권장합니다.</p>
+            <label class="reference-transcript">레퍼런스에서 실제로 읽은 문장
+              <textarea id="reference-text" placeholder="들리는 내용을 띄어쓰기와 문장부호까지 정확히 입력하세요."></textarea>
+            </label>
+            <button id="save-reference-text" class="ghost">레퍼런스 대본 저장</button>
+            <label class="dropzone" id="reference-dropzone">
+              <input id="reference-file" type="file" accept="audio/*,.wav,.flac,.mp3">
+              <span class="drop-icon">↥</span><strong>음성 파일 선택</strong><small>파일은 로컬 artifact 저장소에 복사됩니다.</small>
+            </label>
+          </article>
+        </div>
+
+        <article class="card corpus-card">
+          <div class="card-heading"><div><span class="step">C</span><h2>한국어 Gate 0 대본</h2></div><div class="row"><span id="prompt-count" class="tag">0 문장</span><button id="load-corpus-button" class="ghost">기본 20문장 추가</button></div></div>
+          <div id="prompt-preview" class="prompt-preview empty-state">프로젝트를 선택하세요.</div>
+          <form id="prompt-form" class="inline-form"><input id="prompt-text" placeholder="사용자 대본을 한 문장 추가"><button class="ghost" type="submit">추가</button></form>
+        </article>
+
+        <article class="card launch-card">
+          <div class="card-heading"><div><span class="step">D</span><h2>벤치마크 실행</h2></div><span id="job-state" class="tag muted">대기</span></div>
+          <div id="engine-checkboxes" class="engine-options"></div>
+          <div class="launch-controls"><label>Seed<input id="seeds-input" value="7, 42"></label><button id="start-button" class="primary">작업 큐에 추가</button></div>
+          <div id="progress-wrap" class="progress-wrap hidden"><div class="progress-track"><span id="progress-bar"></span></div><p id="progress-label"></p></div>
+        </article>
+
+        <article class="card results-card">
+          <div class="card-heading"><div><span class="step">E</span><h2>생성 결과</h2></div><button id="refresh-button" class="ghost">새로고침</button></div>
+          <div class="table-wrap"><table><thead><tr><th>코드</th><th>대본</th><th>엔진</th><th>Seed</th><th>길이</th><th>시간·VRAM</th><th>검사</th><th>재생</th></tr></thead><tbody id="runs-table"><tr><td colspan="8" class="empty-state">아직 결과가 없습니다.</td></tr></tbody></table></div>
+        </article>
+      </section>
+
+      <section id="review-view" class="view">
+        <div class="review-layout">
+          <article class="card blind-card">
+            <div class="blind-header"><div><p class="eyebrow">ENGINE NAMES HIDDEN</p><h2>어느 쪽이 더 자연스럽고 닮았나요?</h2></div><span id="comparison-id" class="tag muted">준비 중</span></div>
+            <blockquote id="comparison-text">비교할 결과를 생성하세요.</blockquote>
+            <div class="take-grid">
+              <div class="take"><span>TAKE A</span><audio id="left-audio" controls></audio><button class="choice" data-winner="left">A가 더 좋음</button></div>
+              <div class="versus">VS</div>
+              <div class="take"><span>TAKE B</span><audio id="right-audio" controls></audio><button class="choice" data-winner="right">B가 더 좋음</button></div>
+            </div>
+            <textarea id="comparison-notes" placeholder="선택 이유나 이상한 발음을 기록하세요. 선택 사항입니다."></textarea>
+            <div class="review-actions"><button class="ghost choice" data-winner="tie">비슷함</button><button class="ghost danger choice" data-winner="both_bad">둘 다 실패</button></div>
+          </article>
+          <article class="card score-card"><div class="card-heading"><h2>현재 선택 집계</h2></div><div id="score-list" class="score-list empty-state">평가가 아직 없습니다.</div><p class="support">집계는 평가 화면에서 숨겨져 모델 선입견을 줄입니다.</p></article>
+        </div>
+      </section>
+
+      <section id="engines-view" class="view">
+        <div class="grid two">
+          <article class="card"><div class="card-heading"><h2>등록된 엔진</h2></div><div id="engine-list" class="engine-list"></div></article>
+          <article class="card"><div class="card-heading"><h2>Command 어댑터</h2></div>
+            <form id="engine-form" class="stack-form">
+              <label>식별자<input id="engine-slug" placeholder="qwen3-tts-06b" required></label>
+              <label>표시 이름<input id="engine-name" placeholder="Qwen3-TTS 0.6B" required></label>
+              <label>버전<input id="engine-version" placeholder="git SHA 또는 체크포인트"></label>
+              <label>명령 JSON 배열<textarea id="engine-command" required>["python", "adapter.py", "--text", "{text}", "--reference", "{reference}", "--output", "{output}", "--seed", "{seed}"]</textarea></label>
+              <p class="support"><code>{text}</code>, <code>{reference}</code>, <code>{reference_text}</code>, <code>{output}</code>, <code>{seed}</code>, <code>{language}</code>를 사용할 수 있습니다. Shell을 거치지 않습니다.</p>
+              <button class="primary" type="submit">엔진 저장</button>
+            </form>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="project-dialog"><form id="project-form" method="dialog"><div class="dialog-heading"><h2>새 벤치마크 프로젝트</h2><button value="cancel" class="icon-button">×</button></div><label>프로젝트 이름<input id="project-name" required placeholder="내 목소리 · 파일럿 01"></label><label>설명<textarea id="project-description" placeholder="마이크, 녹음 세션, 목표를 기록하세요."></textarea></label><button class="primary" value="default">프로젝트 만들기</button></form></dialog>
+  <script src="/app.js?v=20260719-seed-10-default"></script>
+</body>
+</html>
