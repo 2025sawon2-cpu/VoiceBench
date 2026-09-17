@@ -62,7 +62,21 @@ class QwenWorkerServer(ThreadingHTTPServer):
         reference_text = str(payload.get("reference_text", "")).strip()
         output = Path(str(payload.get("output", ""))).resolve()
         language = LANGUAGES.get(str(payload.get("language", "ko")).lower(), "Korean")
-        seed = int(payload.get("seed", 10))
+        seed = int(payload.get("seed", 13))
+        generation = payload.get("generation") or {}
+        allowed_generation = {
+            "do_sample",
+            "top_k",
+            "top_p",
+            "temperature",
+            "repetition_penalty",
+            "subtalker_dosample",
+            "subtalker_top_k",
+            "subtalker_top_p",
+            "subtalker_temperature",
+        }
+        if not isinstance(generation, dict) or set(generation) - allowed_generation:
+            raise ValueError("Unsupported generation parameters")
         if not text or not reference or not reference_text:
             raise ValueError("text, reference, and reference_text are required")
 
@@ -85,6 +99,7 @@ class QwenWorkerServer(ThreadingHTTPServer):
                     text=text,
                     language=language,
                     voice_clone_prompt=prompt,
+                    **generation,
                 )
             output.parent.mkdir(parents=True, exist_ok=True)
             sf.write(output, wavs[0], sample_rate, subtype="PCM_16")
@@ -92,6 +107,7 @@ class QwenWorkerServer(ThreadingHTTPServer):
             "output": str(output),
             "sample_rate": sample_rate,
             "prompt_cache_entries": len(self.prompt_cache),
+            "generation": generation,
         }
 
 

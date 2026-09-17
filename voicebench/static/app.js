@@ -44,20 +44,36 @@ function renderStudio() {
   const studio = app.studio;
   if (!studio) return;
   $('#studio-voice-name').textContent = studio.voice?.name || '레퍼런스 미등록';
-  $('#studio-engine-state').textContent = studio.available ? `${studio.engine.name} · 준비됨` : '엔진 준비 필요';
+  $('#studio-engine-state').textContent = studio.available ? `${studio.engine.name} · 자동 품질 검사` : '엔진 준비 필요';
   $('#studio-engine-state').classList.toggle('muted', !studio.available);
   $('#studio-generate').disabled = !studio.available;
+  const engineSelect = $('#studio-engine');
+  const selectedEngine = engineSelect.value;
+  engineSelect.innerHTML = (studio.studio_engines || []).map(engine =>
+    `<option value="${engine.slug}">${escapeHtml(engine.name)}</option>`
+  ).join('');
+  if ([...engineSelect.options].some(option => option.value === selectedEngine)) {
+    engineSelect.value = selectedEngine;
+  } else if ([...engineSelect.options].some(option => option.value === studio.default_engine_slug)) {
+    engineSelect.value = studio.default_engine_slug;
+  }
 
-  const active = studio.requests.find(item => ['queued','running'].includes(item.status));
+  const active = studio.requests.find(item => item.id === studio.processing_request_id)
+    || studio.requests.find(item => item.status === 'queued');
   $('#studio-active').classList.toggle('hidden', !active);
   if (active) {
     const done = Number(active.completed_segments || 0);
     const total = Number(active.segment_count || 1);
     $('#studio-active-state').textContent = studioStatusLabel(active.status);
     $('#studio-progress-bar').style.width = `${Math.round(done / total * 100)}%`;
-    $('#studio-progress-label').textContent = active.status === 'queued' && done === 0
-      ? '모델을 준비하고 있습니다. 첫 생성은 약 1분 정도 걸릴 수 있습니다.'
-      : `${total}개 음성 조각 중 ${done}개를 완성했습니다.`;
+    const source = active.source === 'external_api' ? 'MCP/API' : '웹';
+    const plan = active.speech_plan || {};
+    const planLabel = plan.paragraph_count ? `${plan.paragraph_count}개 문단 낭독 계획 · ` : '';
+    $('#studio-progress-label').textContent = active.status === 'cancelled'
+      ? '취소됐습니다. 이미 GPU에서 시작된 마지막 조각만 정리 중입니다.'
+      : active.status === 'queued'
+        ? `${source} 요청이 대기 중입니다. ${planLabel}앞에 생성 조각 ${active.jobs_ahead || 0}개가 남아 있습니다.`
+        : `${source} 요청을 생성·품질 검사 중입니다. ${planLabel}${total}개 조각 중 ${done}개 완료, 남은 대기 조각 ${active.queued_segments || 0}개.`;
   }
 
   const history = $('#studio-history');
@@ -69,13 +85,55 @@ function renderStudio() {
     history.innerHTML = studio.requests.map((item, index) => {
       const date = new Date(item.created_at).toLocaleString('ko-KR', {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
       const progress = `${item.completed_segments || 0}/${item.segment_count || 0}조각`;
+      const source = item.source === 'external_api' ? 'MCP/API' : '웹';
+      const engine = item.engine_name || item.engine_slug || '엔진 정보 없음';
+      const quality = item.quality_control || {};
+      const fallbackSeeds = Object.entries(quality.selected_seed_counts || {})
+        .filter(([seed]) => Number(seed) !== Number(item.seed))
+        .map(([seed, count]) => `Seed ${seed} ${count}조각`);
+      const seedLabel = fallbackSeeds.length
+        ? `기본 Seed ${item.seed} · QA 대체 ${fallbackSeeds.join(', ')}`
+        : `Seed ${item.seed}`;
+      const qualityLabel = quality.checked_segments
+        ? ` · 품질검사 ${quality.checked_segments}/${item.segment_count || 0}`
+          + (quality.regenerated_segments ? ` · 재생성 ${quality.regenerated_segments}조각` : '')
+          + (quality.warning_segments ? ` · 경고 ${quality.warning_segments}조각` : '')
+        : '';
+      const speechPlan = item.speech_plan || {};
+      const roleCounts = speechPlan.role_counts || {};
+      const expressiveUnits = Number(roleCounts.question || 0)
+        + Number(roleCounts.transition || 0)
+        + Number(roleCounts.conclusion || 0)
+        + Number(roleCounts.exclamation || 0);
+      const planSummary = speechPlan.paragraph_count
+        ? ` · 낭독계획 ${speechPlan.paragraph_count}문단/${speechPlan.segment_count}호흡`
+          + (expressiveUnits ? ` · 강조단위 ${expressiveUnits}` : '')
+        : '';
       const audio = item.status === 'succeeded'
         ? `<audio controls preload="none" src="${item.audio_url}"></audio><a class="download-button" href="${item.audio_url}" download="my-voice-${item.id}.wav">WAV 저장</a>`
         : item.status === 'failed'
           ? `<span class="studio-error">${escapeHtml((item.error || '생성에 실패했습니다.').slice(0, 180))}</span>`
           : `<span class="tag ${item.status === 'queued' ? 'muted' : ''}">${studioStatusLabel(item.status)}</span>`;
-      return `<div class="studio-result"><div class="studio-result-main"><span class="studio-result-index">${String(studio.requests.length-index).padStart(2,'0')}</span><div class="studio-result-copy"><strong>${escapeHtml(item.original_text)}</strong><small>${date} · Seed ${item.seed} · ${progress}${item.duration_seconds ? ` · ${Number(item.duration_seconds).toFixed(1)}초` : ''}</small></div></div><div class="studio-result-actions">${audio}</div></div>`;
+      const cancel = ['queued','running'].includes(item.status)
+        ? `<button class="ghost danger studio-cancel" data-request-id="${item.id}">취소</button>` : '';
+      const queue = item.status === 'queued' ? ` · 앞 ${item.jobs_ahead || 0}개 조각` : '';
+      const chapters = (item.chapters || []).length > 1
+        ? `<details class="chapter-list"><summary>장문 HQ · ${item.chapters.length}개 장 보기</summary>${item.chapters.map(chapter => {
+            const chapterAudio = chapter.status === 'succeeded'
+              ? `<audio controls preload="none" src="${chapter.audio_url}"></audio><a class="chapter-download" href="${chapter.audio_url}" download="voice-${item.id}-chapter-${chapter.position}.wav">저장</a>`
+              : `<span class="tag muted">${studioStatusLabel(chapter.status)} · ${chapter.completed_segments}/${chapter.segment_count}</span>`;
+            return `<div class="chapter-item"><span><b>${chapter.position}장</b><small>${chapter.character_count.toLocaleString()}자</small></span><div>${chapterAudio}</div></div>`;
+          }).join('')}</details>`
+        : '';
+      return `<div class="studio-result ${item.id === studio.processing_request_id ? 'is-processing' : ''}"><div class="studio-result-main"><span class="studio-result-index">#${item.id}</span><div class="studio-result-copy"><strong>${escapeHtml(item.original_text)}</strong><small><b class="source-badge">${source}</b> · 엔진 ${engine} · ${date} · ${seedLabel} · ${progress}${planSummary}${qualityLabel}${queue}${item.duration_seconds ? ` · ${Number(item.duration_seconds).toFixed(1)}초` : ''}</small>${chapters}</div></div><div class="studio-result-actions">${audio}${cancel}</div></div>`;
     }).join('');
+    $$('.studio-cancel').forEach(button => button.onclick = async () => {
+      const id = Number(button.dataset.requestId);
+      if (!confirm(`요청 #${id}의 남은 생성 조각을 취소할까요?`)) return;
+      await api(`/api/studio/${id}`, { method: 'DELETE' });
+      flash('남은 생성 조각을 취소했습니다.');
+      await loadStudio();
+    });
   }
   clearInterval(app.studioPoller);
   if (studio.requests.some(item => ['queued','running'].includes(item.status))) {
@@ -192,9 +250,14 @@ function escapeHtml(value) {
 
 $$('.nav-item').forEach(node => node.onclick = () => switchView(node.dataset.view));
 $('#studio-text').oninput = event => {
-  const length = event.target.value.length;
+  const text = event.target.value;
+  const length = text.length;
   $('#studio-char-count').textContent = `${length.toLocaleString()}자`;
-  $('#studio-segment-estimate').textContent = `예상 ${length ? Math.ceil(length / 90) : 0}조각`;
+  const sentences = text.trim()
+    ? text.trim().split(/(?<=[.!?。！？])\s+|\n\s*\n+/).filter(Boolean)
+    : [];
+  const estimated = sentences.reduce((count, sentence) => count + Math.max(1, Math.ceil(sentence.length / 180)), 0);
+  $('#studio-segment-estimate').textContent = `예상 ${estimated}조각`;
 };
 $('#studio-form').onsubmit = async event => {
   event.preventDefault();
@@ -203,7 +266,12 @@ $('#studio-form').onsubmit = async event => {
   $('#studio-generate').disabled = true;
   $('#studio-generate').textContent = '요청 중…';
   try {
-    await api('/api/studio/synthesize', jsonOptions({text, seed:Number($('#studio-seed').value || 10)}));
+    await api('/api/studio/synthesize', jsonOptions({
+      text,
+      seed:Number($('#studio-seed').value || 13),
+      engine_slug:$('#studio-engine').value || app.studio?.default_engine_slug,
+      quality_mode:'long_form_hq',
+    }));
     $('#studio-text').value = '';
     $('#studio-text').dispatchEvent(new Event('input'));
     await loadStudio();

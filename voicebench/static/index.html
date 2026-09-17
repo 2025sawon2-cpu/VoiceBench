@@ -38,17 +38,17 @@
           <div class="studio-copy">
             <p class="eyebrow">SCRIPT TO SPEECH</p>
             <h2>내 목소리로 읽을 대본을 입력하세요.</h2>
-            <p>긴 대본은 안전한 길이로 나눈 뒤 자연스러운 간격을 넣어 하나의 WAV로 완성합니다.</p>
+            <p>질문·전환어·문단을 분석해 낭독 호흡을 계획하고, 각 조각의 누락·반복을 자동 검사한 뒤 하나의 WAV로 완성합니다.</p>
           </div>
           <form id="studio-form">
             <label for="studio-text" class="sr-only">합성할 대본</label>
             <textarea id="studio-text" placeholder="예: 안녕하세요. 오늘은 새로운 이야기를 들려드리겠습니다." required></textarea>
             <div class="composer-footer">
               <div class="composer-meta"><span id="studio-char-count">0자</span><span id="studio-segment-estimate">예상 0조각</span></div>
-              <div class="composer-actions"><label>Seed <input id="studio-seed" type="number" value="10" min="0" max="2147483647"></label><button id="studio-generate" class="primary" type="submit">음성 만들기</button></div>
+              <div class="composer-actions"><label>엔진 <select id="studio-engine"></select></label><label>Seed <input id="studio-seed" type="number" value="13" min="0" max="2147483647"></label><button id="studio-generate" class="primary" type="submit">음성 만들기</button></div>
             </div>
           </form>
-          <p class="studio-note"><span></span>음성은 이 PC 안에서만 처리됩니다. 첫 생성은 모델을 올리는 데 시간이 걸리고, 이후 생성은 더 빨라집니다.</p>
+          <p class="studio-note"><span></span>장문 HQ 모드: 문단과 의미 전환에 맞춰 호흡을 구성하고, CPU 음성인식으로 명확한 실패만 자동 재생성합니다.</p>
         </article>
 
         <article id="studio-active" class="card studio-active hidden">
@@ -138,6 +138,6 @@
   </div>
 
   <dialog id="project-dialog"><form id="project-form" method="dialog"><div class="dialog-heading"><h2>새 벤치마크 프로젝트</h2><button value="cancel" class="icon-button">×</button></div><label>프로젝트 이름<input id="project-name" required placeholder="내 목소리 · 파일럿 01"></label><label>설명<textarea id="project-description" placeholder="마이크, 녹음 세션, 목표를 기록하세요."></textarea></label><button class="primary" value="default">프로젝트 만들기</button></form></dialog>
-  <script src="/app.js?v=20260719-seed-10-default"></script>
+  <script src="/app.js?v=20260822-natural-stitching"></script>
 </body>
 </html>

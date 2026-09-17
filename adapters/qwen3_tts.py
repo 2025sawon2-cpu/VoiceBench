@@ -22,7 +22,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reference")
     parser.add_argument("--ref-text", default="")
     parser.add_argument("--output")
-    parser.add_argument("--seed", type=int, default=10)
+    parser.add_argument("--seed", type=int, default=13)
     parser.add_argument("--language", default="ko")
     parser.add_argument("--model", default=os.environ.get("QWEN3_TTS_MODEL", DEFAULT_MODEL))
     parser.add_argument("--dtype", choices=("auto", "fp16", "fp32"), default="auto")

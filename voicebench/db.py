@@ -97,10 +97,14 @@ CREATE TABLE IF NOT EXISTS studio_requests (
     original_text TEXT NOT NULL,
     seed INTEGER NOT NULL,
     source TEXT NOT NULL DEFAULT 'studio',
+    quality_mode TEXT NOT NULL DEFAULT 'standard',
+    request_fingerprint TEXT,
     status TEXT NOT NULL CHECK(status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')),
     output_path TEXT,
     output_sha256 TEXT,
     duration_seconds REAL,
+    download_count INTEGER NOT NULL DEFAULT 0,
+    last_downloaded_at TEXT,
     error TEXT,
     created_at TEXT NOT NULL,
     started_at TEXT,
@@ -116,6 +120,11 @@ CREATE TABLE IF NOT EXISTS studio_segments (
     text TEXT NOT NULL,
     prompt_id INTEGER NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
     job_id INTEGER NOT NULL UNIQUE REFERENCES jobs(id) ON DELETE CASCADE,
+    paragraph_index INTEGER NOT NULL DEFAULT 1,
+    sentence_count INTEGER NOT NULL DEFAULT 1,
+    semantic_role TEXT NOT NULL DEFAULT 'statement',
+    paragraph_end INTEGER NOT NULL DEFAULT 0,
+    pause_after_ms INTEGER,
     UNIQUE(request_id, position)
 );
 """
@@ -139,6 +148,41 @@ class Database:
                 connection.execute(
                     "ALTER TABLE studio_requests ADD COLUMN source TEXT NOT NULL DEFAULT 'studio'"
                 )
+            if "quality_mode" not in studio_columns:
+                connection.execute(
+                    "ALTER TABLE studio_requests ADD COLUMN quality_mode TEXT NOT NULL DEFAULT 'standard'"
+                )
+            if "request_fingerprint" not in studio_columns:
+                connection.execute(
+                    "ALTER TABLE studio_requests ADD COLUMN request_fingerprint TEXT"
+                )
+            if "download_count" not in studio_columns:
+                connection.execute(
+                    "ALTER TABLE studio_requests ADD COLUMN download_count INTEGER NOT NULL DEFAULT 0"
+                )
+            if "last_downloaded_at" not in studio_columns:
+                connection.execute(
+                    "ALTER TABLE studio_requests ADD COLUMN last_downloaded_at TEXT"
+                )
+            segment_columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(studio_segments)")
+            }
+            segment_migrations = {
+                "paragraph_index": "INTEGER NOT NULL DEFAULT 1",
+                "sentence_count": "INTEGER NOT NULL DEFAULT 1",
+                "semantic_role": "TEXT NOT NULL DEFAULT 'statement'",
+                "paragraph_end": "INTEGER NOT NULL DEFAULT 0",
+                "pause_after_ms": "INTEGER",
+            }
+            for name, definition in segment_migrations.items():
+                if name not in segment_columns:
+                    connection.execute(
+                        f"ALTER TABLE studio_segments ADD COLUMN {name} {definition}"
+                    )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_studio_requests_fingerprint "
+                "ON studio_requests(request_fingerprint, source, status)"
+            )
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

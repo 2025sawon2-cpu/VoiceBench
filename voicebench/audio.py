@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import array
 import math
+import re
 import struct
+import sys
 import wave
 from pathlib import Path
 from typing import Any
@@ -64,11 +67,73 @@ def make_mock_wav(path: Path, text: str, seed: int, sample_rate: int = 24000) ->
         target.writeframes(frames)
 
 
-def concatenate_wavs(paths: list[Path], output: Path, silence_ms: int = 220) -> None:
+def pause_after_text(text: str, fallback_ms: int = 220) -> int:
+    ending = text.rstrip().rstrip("\"'’”)]}」』")
+    if re.search(r"[!?！？]+$", ending):
+        return 320
+    if re.search(r"[.。]+$", ending):
+        return 280
+    if re.search(r"[,，;；:：]+$", ending):
+        return 170
+    return fallback_ms
+
+
+def _trim_pcm16_silence(
+    frames: bytes,
+    channels: int,
+    sample_rate: int,
+    threshold: int = 350,
+    window_ms: int = 10,
+    edge_padding_ms: int = 40,
+) -> tuple[bytes, int, int]:
+    values = array.array("h")
+    values.frombytes(frames)
+    if sys.byteorder != "little":
+        values.byteswap()
+    frame_count = len(values) // channels
+    if not frame_count:
+        return frames, 0, 0
+    window_frames = max(1, round(sample_rate * window_ms / 1000))
+    first_active: int | None = None
+    last_active = 0
+    for start in range(0, frame_count, window_frames):
+        end = min(frame_count, start + window_frames)
+        sample_start = start * channels
+        sample_end = end * channels
+        if max(abs(value) for value in values[sample_start:sample_end]) >= threshold:
+            if first_active is None:
+                first_active = start
+            last_active = end
+    if first_active is None:
+        return frames, 0, 0
+    padding_frames = round(sample_rate * edge_padding_ms / 1000)
+    trim_start = max(0, first_active - padding_frames)
+    trim_end = min(frame_count, last_active + padding_frames)
+    trimmed = values[trim_start * channels : trim_end * channels]
+    if sys.byteorder != "little":
+        trimmed.byteswap()
+    return (
+        trimmed.tobytes(),
+        first_active - trim_start,
+        trim_end - last_active,
+    )
+
+
+def concatenate_wavs(
+    paths: list[Path],
+    output: Path,
+    silence_ms: int = 220,
+    boundary_texts: list[str] | None = None,
+    boundary_pauses_ms: list[int | None] | None = None,
+) -> None:
     if not paths:
         raise ValueError("결합할 WAV 파일이 없습니다.")
+    if boundary_texts is not None and len(boundary_texts) != len(paths):
+        raise ValueError("WAV 파일과 경계 대본 수가 일치하지 않습니다.")
+    if boundary_pauses_ms is not None and len(boundary_pauses_ms) != len(paths):
+        raise ValueError("WAV 파일과 계획된 경계 호흡 수가 일치하지 않습니다.")
     parameters: tuple[int, int, int] | None = None
-    chunks: list[bytes] = []
+    chunks: list[tuple[bytes, int, int]] = []
     for path in paths:
         with wave.open(str(path), "rb") as source:
             current = (source.getnchannels(), source.getsampwidth(), source.getframerate())
@@ -76,16 +141,35 @@ def concatenate_wavs(paths: list[Path], output: Path, silence_ms: int = 220) -> 
                 parameters = current
             elif current != parameters:
                 raise ValueError(f"WAV 형식이 일치하지 않습니다: {path}")
-            chunks.append(source.readframes(source.getnframes()))
+            frames = source.readframes(source.getnframes())
+            if current[1] == 2:
+                chunks.append(_trim_pcm16_silence(frames, current[0], current[2]))
+            else:
+                chunks.append((frames, 0, 0))
     channels, sample_width, sample_rate = parameters
-    silent_frames = round(sample_rate * silence_ms / 1000)
-    silence = b"\x00" * silent_frames * channels * sample_width
     output.parent.mkdir(parents=True, exist_ok=True)
     with wave.open(str(output), "wb") as target:
         target.setnchannels(channels)
         target.setsampwidth(sample_width)
         target.setframerate(sample_rate)
-        for index, chunk in enumerate(chunks):
+        for index, (chunk, leading_frames, _) in enumerate(chunks):
             if index:
-                target.writeframes(silence)
+                planned_pause = (
+                    boundary_pauses_ms[index - 1]
+                    if boundary_pauses_ms is not None
+                    else None
+                )
+                desired_ms = int(planned_pause) if planned_pause is not None else (
+                    pause_after_text(boundary_texts[index - 1], silence_ms)
+                    if boundary_texts is not None
+                    else silence_ms
+                )
+                previous_trailing = chunks[index - 1][2]
+                desired_frames = round(sample_rate * desired_ms / 1000)
+                inserted_frames = max(
+                    0, desired_frames - previous_trailing - leading_frames
+                )
+                target.writeframes(
+                    b"\x00" * inserted_frames * channels * sample_width
+                )
             target.writeframes(chunk)

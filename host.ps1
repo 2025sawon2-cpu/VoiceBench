@@ -1,6 +1,8 @@
 param(
     [int]$Port = 8765,
-    [switch]$Background
+    [switch]$Background,
+    [string]$BindAddress = '127.0.0.1',
+    [switch]$NoTunnel
 )
 
 $ErrorActionPreference = 'Stop'
@@ -21,7 +23,13 @@ if (-not (Test-Path $python)) {
     throw 'VoiceBench Python environment is unavailable. Run .\bootstrap.ps1 first.'
 }
 if (-not (Test-Path $ngrok)) {
-    throw 'ngrok is unavailable. Re-run the hosting setup from Codex.'
+    if (-not $NoTunnel) {
+        throw 'ngrok is unavailable. Re-run the hosting setup from Codex.'
+    }
+}
+
+if ($BindAddress -notin @('127.0.0.1', '0.0.0.0')) {
+    throw 'BindAddress must be 127.0.0.1 (local only) or 0.0.0.0 (LAN).'
 }
 
 $plainPassword = $env:VOICEBENCH_ACCESS_KEY
@@ -69,7 +77,7 @@ $ngrokProcess = $null
 $keepRunning = $false
 try {
     $serverProcess = Start-Process -FilePath $python `
-        -ArgumentList @('-m', 'voicebench', '--host', '127.0.0.1', '--port', "$Port") `
+        -ArgumentList @('-m', 'voicebench', '--host', $BindAddress, '--port', "$Port") `
         -WorkingDirectory $root `
         -WindowStyle Hidden `
         -RedirectStandardOutput $stdoutLog `
@@ -97,7 +105,20 @@ try {
     }
     $env:VOICEBENCH_EXTERNAL_API_KEY = $previousExternalApiKey
 
-    if ($Background) {
+    if ($Background -and $NoTunnel) {
+        $session = [ordered]@{
+            url = "http://$BindAddress`:$Port"
+            port = $Port
+            bind_address = $BindAddress
+            server_pid = $serverProcess.Id
+            ngrok_pid = $null
+            started_at = [DateTime]::UtcNow.ToString('o')
+        }
+        [IO.File]::WriteAllText($sessionFile, ($session | ConvertTo-Json), [Text.Encoding]::UTF8)
+        $keepRunning = $true
+        Write-Output "http://$BindAddress`:$Port"
+    }
+    elseif ($Background) {
         $env:VOICEBENCH_ACCESS_KEY = $previousAccessKey
         $ngrokProcess = Start-Process -FilePath $ngrok `
             -ArgumentList @('http', "http://127.0.0.1:$Port", '--log=stdout', '--log-format=json') `
@@ -129,6 +150,7 @@ try {
         $session = [ordered]@{
             url = $publicUrl
             port = $Port
+            bind_address = $BindAddress
             server_pid = $serverProcess.Id
             ngrok_pid = $ngrokProcess.Id
             started_at = [DateTime]::UtcNow.ToString('o')
@@ -137,7 +159,7 @@ try {
         $keepRunning = $true
         Write-Output $publicUrl
     }
-    else {
+    elseif (-not $NoTunnel) {
         Write-Host ''
         Write-Host 'Starting VoiceBench web hosting.' -ForegroundColor Green
         Write-Host 'Login username: voice' -ForegroundColor Cyan
@@ -150,6 +172,9 @@ try {
         $plainPassword = $null
         $authorization = $null
         & $ngrok http "http://127.0.0.1:$Port"
+    }
+    else {
+        throw 'NoTunnel requires -Background so the server can remain running.'
     }
 }
 finally {

@@ -46,7 +46,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Create speech through VoiceBench External TTS API")
     parser.add_argument("--base-url", required=True, help="For example: https://example.ngrok-free.dev")
     parser.add_argument("--text", required=True)
-    parser.add_argument("--seed", type=int, default=10)
     parser.add_argument("--output", type=Path, default=Path("voicebench-result.wav"))
     parser.add_argument("--poll-seconds", type=float, default=5.0)
     arguments = parser.parse_args()
@@ -59,10 +58,10 @@ def main() -> None:
     created, _ = api_request(
         f"{base_url}/v1/tts",
         api_key,
-        {"text": arguments.text, "seed": arguments.seed},
+        {"text": arguments.text},
     )
     request_id = int(created["id"])
-    print(f"VoiceBench request {request_id} queued with seed {arguments.seed}.")
+    print(f"VoiceBench request {request_id} queued.")
 
     while True:
         status, _ = api_request(f"{base_url}/v1/tts/{request_id}", api_key)

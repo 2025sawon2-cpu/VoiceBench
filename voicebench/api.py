@@ -20,7 +20,7 @@ from .config import Paths
 from .db import Database
 from .engines import shutdown_workers
 from .runner import JobRunner
-from .service import Service
+from .service import STUDIO_DEFAULT_SEED, STUDIO_ENGINE_SLUG, Service
 
 
 class VoiceBenchServer(ThreadingHTTPServer):
@@ -31,6 +31,7 @@ class VoiceBenchServer(ThreadingHTTPServer):
         self.paths = paths
         self.database = Database(paths.database)
         self.service = Service(paths, self.database)
+        self.service.recover_interrupted_jobs()
         self.runner = JobRunner(paths, self.database)
         self.access_key = os.environ.get("VOICEBENCH_ACCESS_KEY", "")
         self.external_api_key = os.environ.get("VOICEBENCH_EXTERNAL_API_KEY", "")
@@ -94,6 +95,14 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
                 return self.send_file(
                     self.server.service.studio_audio_path(int(match.group(1))), "audio/wav"
                 )
+            match = re.fullmatch(r"/api/studio/(\d+)/chapters/(\d+)/audio", path)
+            if match:
+                return self.send_file(
+                    self.server.service.studio_chapter_audio_path(
+                        int(match.group(1)), int(match.group(2))
+                    ),
+                    "audio/wav",
+                )
             return self.serve_static(path)
         except Exception as error:
             self.send_error_json(error)
@@ -111,6 +120,15 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
                         "audio/wav",
                         head_only=True,
                     )
+                match = re.fullmatch(r"/v1/tts/(\d+)/chapters/(\d+)/audio", path)
+                if match:
+                    return self.send_file(
+                        self.server.service.external_tts_chapter_audio_path(
+                            int(match.group(1)), int(match.group(2))
+                        ),
+                        "audio/wav",
+                        head_only=True,
+                    )
                 return self.send_json({}, status=HTTPStatus.NOT_FOUND, head_only=True)
             if not self.is_authorized():
                 return self.request_authentication(head_only=True)
@@ -125,6 +143,15 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
             if match:
                 return self.send_file(
                     self.server.service.studio_audio_path(int(match.group(1))),
+                    "audio/wav",
+                    head_only=True,
+                )
+            match = re.fullmatch(r"/api/studio/(\d+)/chapters/(\d+)/audio", path)
+            if match:
+                return self.send_file(
+                    self.server.service.studio_chapter_audio_path(
+                        int(match.group(1)), int(match.group(2))
+                    ),
                     "audio/wav",
                     head_only=True,
                 )
@@ -151,7 +178,10 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
                 payload = self.read_json()
                 return self.send_json(
                     self.server.service.create_studio_request(
-                        payload.get("text", ""), int(payload.get("seed", 10))
+                        payload.get("text", ""),
+                        int(payload.get("seed", STUDIO_DEFAULT_SEED)),
+                        payload.get("engine_slug", STUDIO_ENGINE_SLUG),
+                        quality_mode=payload.get("quality_mode", "long_form_hq"),
                     ),
                     status=HTTPStatus.CREATED,
                 )
@@ -211,6 +241,20 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
         except Exception as error:
             self.send_error_json(error)
 
+    def do_DELETE(self) -> None:
+        try:
+            path = urlparse(self.path).path
+            if not self.is_authorized():
+                return self.request_authentication()
+            match = re.fullmatch(r"/api/studio/(\d+)", path)
+            if match:
+                return self.send_json(
+                    self.server.service.cancel_studio_request(int(match.group(1)))
+                )
+            self.send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
+        except Exception as error:
+            self.send_error_json(error)
+
     def handle_external_get(self, path: str) -> None:
         if path == "/v1/health":
             return self.send_json(
@@ -222,8 +266,19 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
             )
         match = re.fullmatch(r"/v1/tts/(\d+)/audio", path)
         if match:
+            request_id = int(match.group(1))
+            self.send_file(
+                self.server.service.external_tts_audio_path(request_id), "audio/wav"
+            )
+            if not self.headers.get("Range"):
+                self.server.service.record_external_tts_download(request_id)
+            return
+        match = re.fullmatch(r"/v1/tts/(\d+)/chapters/(\d+)/audio", path)
+        if match:
             return self.send_file(
-                self.server.service.external_tts_audio_path(int(match.group(1))),
+                self.server.service.external_tts_chapter_audio_path(
+                    int(match.group(1)), int(match.group(2))
+                ),
                 "audio/wav",
             )
         match = re.fullmatch(r"/v1/tts/(\d+)", path)
@@ -238,14 +293,15 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
             return self.send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
         payload = self.read_json()
         text = payload.get("text", "")
-        seed = int(payload.get("seed", 10))
         if not isinstance(text, str):
             raise ValueError("text must be a string.")
-        if seed < 0 or seed > 2_147_483_647:
-            raise ValueError("seed must be between 0 and 2147483647.")
 
         now = time.monotonic()
         with self.server.external_request_lock:
+            reusable = self.server.service.reusable_external_tts_request(text)
+            if reusable:
+                reusable["reused"] = True
+                return self.send_json(reusable, status=HTTPStatus.OK)
             cutoff = now - self.server.external_rate_window_seconds
             while (
                 self.server.external_request_times
@@ -265,16 +321,11 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
                     {"error": "The TTS queue is full. Try again later."},
                     status=HTTPStatus.TOO_MANY_REQUESTS,
                 )
-            request = self.server.service.create_studio_request(
-                text,
-                seed,
-                source="external_api",
-            )
+            request = self.server.service.create_external_tts_request(text)
             self.server.external_request_times.append(now)
-        return self.send_json(
-            self.server.service.external_tts_request(request["id"]),
-            status=HTTPStatus.ACCEPTED,
-        )
+        response = self.server.service.external_tts_request(request["id"])
+        response["reused"] = False
+        return self.send_json(response, status=HTTPStatus.ACCEPTED)
 
     def required_int(self, query: dict[str, list[str]], key: str) -> int:
         if key not in query or not query[key]:

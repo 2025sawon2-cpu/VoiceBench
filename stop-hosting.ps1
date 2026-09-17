@@ -9,9 +9,10 @@ if (-not (Test-Path $sessionFile)) {
 
 $session = Get-Content -Raw -LiteralPath $sessionFile | ConvertFrom-Json
 foreach ($entry in @(
-    @{ Id = [int]$session.ngrok_pid; ExpectedName = 'ngrok' },
+    @{ Id = $session.ngrok_pid; ExpectedName = 'ngrok' },
     @{ Id = [int]$session.server_pid; ExpectedName = 'python' }
 )) {
+    if ($null -eq $entry.Id) { continue }
     $process = Get-Process -Id $entry.Id -ErrorAction SilentlyContinue
     if ($process -and $process.ProcessName -eq $entry.ExpectedName) {
         Stop-Process -Id $entry.Id -Force

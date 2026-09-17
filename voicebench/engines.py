@@ -57,26 +57,43 @@ def _json_request(url: str, payload: dict[str, Any] | None, timeout: float) -> d
         raise EngineError(f"Worker HTTP {error.code}: {body}") from error
 
 
-def _worker_ready(health_url: str) -> bool:
+def _worker_health(health_url: str) -> dict[str, Any] | None:
     try:
-        return _json_request(health_url, None, 1).get("status") == "ready"
+        return _json_request(health_url, None, 1)
     except Exception:
+        return None
+
+
+def _worker_matches(health: dict[str, Any] | None, expected_model: str | None) -> bool:
+    if not health or health.get("status") != "ready":
         return False
+    return not expected_model or health.get("model") == expected_model
 
 
 def _ensure_worker(config: dict[str, Any], environment: dict[str, str]) -> None:
     worker = config["worker"]
     endpoint = str(worker["endpoint"])
     health_url = str(worker["health_url"])
-    if _worker_ready(health_url):
+    expected_model = worker.get("model")
+    if _worker_matches(_worker_health(health_url), expected_model):
         return
     with _worker_lock:
-        if _worker_ready(health_url):
+        health = _worker_health(health_url)
+        if _worker_matches(health, expected_model):
             return
         previous = _workers.get(endpoint)
+        if health and health.get("status") == "ready":
+            try:
+                _json_request(endpoint.rsplit("/", 1)[0] + "/shutdown", {}, 3)
+            except Exception:
+                pass
+            deadline = time.time() + 20
+            while time.time() < deadline and _worker_health(health_url):
+                time.sleep(0.25)
         if previous and previous.process.poll() is None:
             previous.process.terminate()
             previous.process.wait(timeout=10)
+        if previous and not previous.log_stream.closed:
             previous.log_stream.close()
         replacements = {"parent_pid": str(os.getpid())}
         command = [str(part).format_map(replacements) for part in worker["command"]]
@@ -99,7 +116,7 @@ def _ensure_worker(config: dict[str, Any], environment: dict[str, str]) -> None:
         _workers[endpoint] = handle
         deadline = time.time() + float(worker.get("startup_timeout_seconds", 240))
         while time.time() < deadline:
-            if _worker_ready(health_url):
+            if _worker_matches(_worker_health(health_url), expected_model):
                 return
             if process.poll() is not None:
                 log_stream.flush()
@@ -151,6 +168,7 @@ def run_engine(engine: dict[str, Any], request: EngineRequest) -> dict[str, Any]
             "output": str(request.output),
             "seed": request.seed,
             "language": request.language,
+            "generation": config.get("generation", {}),
         }
         request.output.parent.mkdir(parents=True, exist_ok=True)
         result = _json_request(

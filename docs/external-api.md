@@ -8,7 +8,7 @@
 - 인증: `Authorization: Bearer <VOICEBENCH_API_KEY>`
 - Content-Type: `application/json`
 - 별도의 글자 수 제한 없음(HTTP 요청 본문은 최대 2MB)
-- Seed 범위: `0`부터 `2147483647`
+- 기본 Seed: 서버에서 `13`으로 고정(외부 입력은 무시)
 - 동시 대기·실행 작업: 최대 4개
 - 생성 요청 제한: 분당 10개
 
@@ -22,22 +22,25 @@ Authorization: Bearer <VOICEBENCH_API_KEY>
 Content-Type: application/json
 
 {
-  "text": "안녕하세요. 외부 AI에서 요청한 음성입니다.",
-  "seed": 10
+  "text": "안녕하세요. 외부 AI에서 요청한 음성입니다."
 }
 ```
 
+외부 요청의 첫 생성 Seed는 항상 `13`이다. 호환되지 않은 기존 클라이언트가 `seed` 필드를 보내더라도 서버는 그 값을 무시한다. 명확한 품질 실패가 감지된 조각의 대체 후보 Seed는 서버가 내부적으로만 관리한다.
+
 응답은 HTTP `202 Accepted`입니다.
+동일 조건의 작업이 실행 중이거나 최근 24시간 안에 완료됐다면 새 작업을 만들지 않고 HTTP `200`으로 기존 요청을 반환하며 `reused`가 `true`입니다.
 
 ```json
 {
   "id": 10,
   "status": "queued",
-  "seed": 10,
+  "seed": 13,
   "segment_count": 1,
   "completed_segments": 0,
   "status_url": "/v1/tts/10",
-  "audio_url": null
+  "audio_url": null,
+  "reused": false
 }
 ```
 
@@ -51,6 +54,14 @@ Authorization: Bearer <VOICEBENCH_API_KEY>
 ```
 
 `status`는 `queued`, `running`, `succeeded`, `failed`, `cancelled` 중 하나입니다. `succeeded`가 되면 `audio_url`이 생깁니다.
+
+요청 ID를 받은 뒤에는 같은 대본을 다시 `POST`하지 말고 해당 ID만 조회합니다. 상태 응답의 `download_count`와 `last_downloaded_at`은 최종 WAV 전체 전송이 완료된 횟수와 마지막 시각입니다.
+
+장문 HQ 요청에는 `chapters` 배열도 포함됩니다. 각 장이 완료되면 해당 항목의 `audio_url`에서 먼저 확인할 수 있고, 전체 요청이 완료되면 최종 `audio_url`에서 결합 WAV를 받습니다.
+
+`quality_control`에는 `checked_segments`, `regenerated_segments`, `fallback_selected_segments`, `warning_segments`, `selected_seed_counts`가 포함됩니다. 기본 Seed 13 이외의 후보가 실제 선택되면 `selected_seed_counts`에 해당 Seed와 조각 수가 표시됩니다. `warning_segments`가 0보다 크면 자동 후보 중 최선을 사용했지만 사람의 청취 확인을 권장한다는 뜻입니다.
+
+`speech_plan`에는 `paragraph_count`, `segment_count`, `sentence_count`, `paragraph_breaks`, `role_counts`가 포함됩니다. `role_counts`로 도입, 질문, 전환, 결론 등 의미 단위가 어떻게 구성됐는지 확인할 수 있습니다.
 
 ## 3. WAV 다운로드
 
@@ -68,7 +79,7 @@ curl -X POST "https://explicit-silliness-ceramics.ngrok-free.dev/v1/tts" \
   -H "Authorization: Bearer $VOICEBENCH_API_KEY" \
   -H "Content-Type: application/json" \
   -H "ngrok-skip-browser-warning: VoiceBench API client" \
-  -d '{"text":"안녕하세요. API 테스트입니다.","seed":10}'
+  -d '{"text":"안녕하세요. API 테스트입니다."}'
 ```
 
 ## Python 클라이언트
@@ -80,7 +91,6 @@ $env:VOICEBENCH_API_KEY = '<API 키>'
 python tools\external_tts_client.py `
   --base-url 'https://explicit-silliness-ceramics.ngrok-free.dev' `
   --text '안녕하세요. 외부 AI가 요청한 대본입니다.' `
-  --seed 10 `
   --output result.wav
 ```
 
@@ -98,12 +108,6 @@ python tools\external_tts_client.py `
       "text": {
         "type": "string",
         "description": "Text to speak. Long scripts are split into safe segments automatically."
-      },
-      "seed": {
-        "type": "integer",
-        "default": 10,
-        "minimum": 0,
-        "maximum": 2147483647
       }
     },
     "required": ["text"]
@@ -112,8 +116,16 @@ python tools\external_tts_client.py `
 ```
 
 에이전트가 `create_voice`를 호출하면 구현부는 생성 요청을 보내고, 완료 상태를 폴링한 다음 WAV 파일 또는 다운로드 URL을 반환해야 합니다.
+장문 요청은 생성 호출을 오래 열어두지 않고 요청 ID를 즉시 반환한 뒤 상태 도구로 확인해야 합니다. 대기 시간이 초과되어도 기존 ID를 보존하며 같은 대본을 다시 제출하지 않습니다.
 
 ## 운영 조건
+
+- 기본 엔진은 `Qwen3-TTS 1.7B 표현형(T1.0/P0.95)`, 고정 Seed는 `13`입니다.
+- 긴 대본은 장문 HQ 모드에서 질문, 전환어, 결론, 문단 경계를 먼저 분석하고 약 180자를 목표로 의미 단위로 나눕니다. 장 파일도 가능한 한 문단 끝에서 나눈 뒤 최종 WAV로 결합합니다.
+- 문단 끝은 기본 420ms, 질문 문단 뒤는 500ms, 전환·결론 단위 앞은 최소 460ms의 전체 호흡을 목표로 합니다. 생성 음성 자체의 가장자리 무음을 측정해 부족한 시간만 삽입합니다.
+- 각 조각은 로컬 CPU Whisper Base로 대본 일치 여부를 검사합니다. 음절 누락, 비정상 반복, 빈 음성, 극단적인 길이처럼 신뢰도 높은 실패에만 서버 내부 대체 후보를 최대 두 번 만들고 가장 좋은 결과를 선택합니다.
+- 각 조각의 실제 앞뒤 무음을 분석해 과도한 정지를 줄이고 직전 문장부호에 맞는 간격으로 결합합니다. 페이드와 음량 보정은 추후 비교 대상으로 남겨두었습니다.
+- 동일 조건의 실행 중 작업과 최근 24시간 내 완료 작업은 자동 재사용됩니다.
 
 - PC가 켜져 있고 절전 상태가 아니어야 합니다.
 - VoiceBench와 ngrok 프로세스가 실행 중이어야 합니다.

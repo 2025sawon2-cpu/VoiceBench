@@ -6,6 +6,8 @@ import json
 import random
 import re
 import shutil
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -38,40 +40,270 @@ DEFAULT_CORPUS = [
 ]
 
 STUDIO_DESCRIPTION = "VoiceBench personal TTS studio"
-STUDIO_ENGINE_SLUG = "qwen3-tts-06b-pascal"
+STUDIO_ENGINE_SLUG = "qwen3-tts-17b-pascal-expressive"
+STUDIO_DEFAULT_SEED = 13
+LONG_FORM_QUALITY_MODE = "long_form_hq"
+LONG_FORM_CHAPTER_TARGET_CHARS = 1800
+LONG_FORM_CHAPTER_MIN_CHARS = 900
+EXTERNAL_REUSE_WINDOW_HOURS = 24
+STUDIO_SEGMENT_TARGET_CHARS = 180
+STUDIO_SEGMENT_HARD_MAX_CHARS = 240
+STUDIO_SEGMENT_MIN_CHARS = 60
+
+_TRANSITION_OPENERS = re.compile(
+    r"^(?:자[,，]?\s*|하지만\s+|그러나\s+|그렇지만\s+|그렇다면\s+|"
+    r"이제\s+|먼저\s+|다음으로\s+|한편\s+|반대로\s+|"
+    r"결국\s+|따라서\s+|그러므로\s+|마지막으로\s+|결론적으로\s+)"
+)
+_CONCLUSION_OPENERS = re.compile(r"^(?:결국|따라서|그러므로|마지막으로|결론적으로)\b")
+_SENTENCE_PATTERN = re.compile(
+    r".+?(?:[.!?。！？]+[\"'’”\)\]\}」』]*|$)(?=\s+|$)"
+)
 
 
-def split_script(text: str, maximum: int = 90) -> list[str]:
-    cleaned = re.sub(r"[ \t]+", " ", text.strip())
+@dataclass(frozen=True)
+class SpeechSegment:
+    text: str
+    paragraph_index: int
+    sentence_count: int
+    semantic_role: str
+    paragraph_end: bool
+    pause_after_ms: int
+
+
+def _split_long_sentence(text: str, target: int, hard_maximum: int) -> list[str]:
+    pieces: list[str] = []
+    remaining = text.strip()
+    minimum = max(20, target // 2)
+    while len(remaining) > hard_maximum:
+        candidates = [
+            match.end()
+            for match in re.finditer(r"[,，;；:：]", remaining[: hard_maximum + 1])
+            if match.end() >= minimum
+        ]
+        if candidates:
+            boundary = min(candidates, key=lambda value: (abs(value - target), -value))
+        else:
+            boundary = remaining.rfind(" ", minimum, hard_maximum + 1)
+            if boundary < minimum:
+                boundary = hard_maximum
+        pieces.append(remaining[:boundary].strip())
+        remaining = remaining[boundary:].strip()
+    if remaining:
+        pieces.append(remaining)
+    return pieces
+
+
+def _split_sentences(paragraph: str) -> list[str]:
+    sentences = [match.group(0).strip() for match in _SENTENCE_PATTERN.finditer(paragraph)]
+    return [sentence for sentence in sentences if sentence] or [paragraph.strip()]
+
+
+def _sentence_role(text: str, opening: bool = False) -> str:
+    ending = text.rstrip().rstrip("\"'’”)\]}」』")
+    if re.search(r"[?？]+$", ending):
+        return "question"
+    if re.search(r"[!！]+$", ending):
+        return "exclamation"
+    if _CONCLUSION_OPENERS.match(text):
+        return "conclusion"
+    if _TRANSITION_OPENERS.match(text):
+        return "transition"
+    return "opening" if opening else "statement"
+
+
+def _segment_role(units: list[dict[str, Any]]) -> str:
+    if units[-1]["role"] in {"question", "exclamation"}:
+        return str(units[-1]["role"])
+    if units[0]["role"] in {"transition", "conclusion", "opening"}:
+        return str(units[0]["role"])
+    return "statement"
+
+
+def _base_pause_after(text: str, role: str) -> int:
+    if role == "question":
+        return 360
+    if role == "exclamation":
+        return 340
+    ending = text.rstrip().rstrip("\"'’”)\]}」』")
+    if re.search(r"[.。]+$", ending):
+        return 280
+    if re.search(r"[,，;；:：]+$", ending):
+        return 170
+    return 220
+
+
+def plan_script(
+    text: str,
+    maximum: int = STUDIO_SEGMENT_TARGET_CHARS,
+    preserve_sentences: bool = False,
+) -> list[SpeechSegment]:
+    cleaned = re.sub(r"[ \t]+", " ", text.replace("\r\n", "\n").strip())
     if not cleaned:
         return []
-    sentences = [
-        part.strip()
-        for part in re.split(r"(?<=[.!?。！？])\s+|\n+", cleaned)
-        if part.strip()
-    ]
-    pieces: list[str] = []
-    for sentence in sentences:
-        remaining = sentence
-        while len(remaining) > maximum:
-            boundary = max(
-                remaining.rfind(mark, 0, maximum + 1)
-                for mark in (" ", ",", "，", ";", ":")
+    hard_maximum = max(maximum, round(maximum * 4 / 3))
+    if maximum == STUDIO_SEGMENT_TARGET_CHARS:
+        hard_maximum = STUDIO_SEGMENT_HARD_MAX_CHARS
+    planned: list[SpeechSegment] = []
+    paragraphs = [item for item in re.split(r"\n\s*\n+", cleaned) if item.strip()]
+    for paragraph_index, raw_paragraph in enumerate(paragraphs, start=1):
+        paragraph = re.sub(r"\s*\n\s*", " ", raw_paragraph).strip()
+        units: list[dict[str, Any]] = []
+        for sentence_index, sentence in enumerate(_split_sentences(paragraph)):
+            role = _sentence_role(
+                sentence,
+                opening=paragraph_index == 1 and sentence_index == 0,
             )
-            if boundary < maximum // 2:
-                boundary = maximum
-            pieces.append(remaining[:boundary].strip(" ,，;:"))
-            remaining = remaining[boundary:].strip(" ,，;:")
-        if remaining:
-            pieces.append(remaining)
+            for piece_index, piece in enumerate(
+                _split_long_sentence(sentence, maximum, hard_maximum)
+            ):
+                units.append(
+                    {
+                        "text": piece,
+                        "role": role if piece_index == 0 else "statement",
+                        "sentence_count": 1 if piece_index == 0 else 0,
+                    }
+                )
 
-    packed: list[str] = []
-    for piece in pieces:
-        if packed and len(packed[-1]) + 1 + len(piece) <= maximum:
-            packed[-1] += " " + piece
-        else:
-            packed.append(piece)
-    return packed
+        groups: list[list[dict[str, Any]]] = []
+        current: list[dict[str, Any]] = []
+        current_length = 0
+
+        def flush() -> None:
+            nonlocal current, current_length
+            if current:
+                groups.append(current)
+                current = []
+                current_length = 0
+
+        for unit in units:
+            unit_text = str(unit["text"])
+            begins_transition = unit["role"] in {"transition", "conclusion"}
+            if (
+                current
+                and begins_transition
+                and current_length >= min(STUDIO_SEGMENT_MIN_CHARS, maximum // 2)
+            ):
+                flush()
+            combined_length = current_length + (1 if current else 0) + len(unit_text)
+            if current and combined_length > maximum:
+                flush()
+            current.append(unit)
+            current_length += (1 if current_length else 0) + len(unit_text)
+            if preserve_sentences or (
+                unit["role"] in {"question", "exclamation"}
+                and current_length >= min(STUDIO_SEGMENT_MIN_CHARS, maximum // 2)
+            ):
+                flush()
+        flush()
+
+        if (
+            not preserve_sentences
+            and len(groups) > 1
+            and len(" ".join(str(item["text"]) for item in groups[-1]))
+            < min(STUDIO_SEGMENT_MIN_CHARS, maximum // 2)
+        ):
+            previous_text = " ".join(str(item["text"]) for item in groups[-2])
+            tail_text = " ".join(str(item["text"]) for item in groups[-1])
+            if len(previous_text) + 1 + len(tail_text) <= hard_maximum:
+                groups[-2].extend(groups.pop())
+
+        paragraph_segments: list[SpeechSegment] = []
+        for group in groups:
+            group_text = " ".join(str(item["text"]) for item in group)
+            role = _segment_role(group)
+            paragraph_segments.append(
+                SpeechSegment(
+                    text=group_text,
+                    paragraph_index=paragraph_index,
+                    sentence_count=sum(int(item["sentence_count"]) for item in group),
+                    semantic_role=role,
+                    paragraph_end=False,
+                    pause_after_ms=_base_pause_after(group_text, role),
+                )
+            )
+        if paragraph_segments:
+            last = paragraph_segments[-1]
+            paragraph_pause = (
+                500
+                if last.semantic_role == "question"
+                else 450
+                if last.semantic_role == "exclamation"
+                else 420
+            )
+            paragraph_segments[-1] = SpeechSegment(
+                text=last.text,
+                paragraph_index=last.paragraph_index,
+                sentence_count=last.sentence_count,
+                semantic_role=last.semantic_role,
+                paragraph_end=True,
+                pause_after_ms=max(paragraph_pause, last.pause_after_ms),
+            )
+        planned.extend(paragraph_segments)
+
+    for index in range(len(planned) - 1):
+        following = planned[index + 1]
+        if following.semantic_role not in {"transition", "conclusion"}:
+            continue
+        current = planned[index]
+        planned[index] = SpeechSegment(
+            text=current.text,
+            paragraph_index=current.paragraph_index,
+            sentence_count=current.sentence_count,
+            semantic_role=current.semantic_role,
+            paragraph_end=current.paragraph_end,
+            pause_after_ms=max(460, current.pause_after_ms),
+        )
+    return planned
+
+
+def split_script(
+    text: str,
+    maximum: int = STUDIO_SEGMENT_TARGET_CHARS,
+    preserve_sentences: bool = False,
+) -> list[str]:
+    return [
+        segment.text
+        for segment in plan_script(text, maximum, preserve_sentences)
+    ]
+
+
+def partition_studio_chapters(
+    segments: list[dict[str, Any]],
+    target_chars: int = LONG_FORM_CHAPTER_TARGET_CHARS,
+    minimum_chars: int = LONG_FORM_CHAPTER_MIN_CHARS,
+) -> list[list[dict[str, Any]]]:
+    if not segments:
+        return []
+    chapters: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    current_chars = 0
+    for segment in segments:
+        length = len(str(segment.get("text", "")))
+        if current and current_chars + length > target_chars:
+            prefix_chars = 0
+            paragraph_boundary = 0
+            for boundary, item in enumerate(current, start=1):
+                prefix_chars += len(str(item.get("text", "")))
+                if item.get("paragraph_end") and prefix_chars >= minimum_chars:
+                    paragraph_boundary = boundary
+            if paragraph_boundary:
+                chapters.append(current[:paragraph_boundary])
+                current = current[paragraph_boundary:]
+                current_chars = sum(len(str(item.get("text", ""))) for item in current)
+            elif current_chars >= minimum_chars:
+                chapters.append(current)
+                current = []
+                current_chars = 0
+        current.append(segment)
+        current_chars += length
+    if current:
+        chapters.append(current)
+    if len(chapters) > 1:
+        last_chars = sum(len(str(item.get("text", ""))) for item in chapters[-1])
+        if last_chars < minimum_chars:
+            chapters[-2].extend(chapters.pop())
+    return chapters
 
 
 class Service:
@@ -230,7 +462,9 @@ class Service:
             raise ValueError("선택한 엔진에는 레퍼런스 음성의 정확한 대본이 필요합니다.")
         now = utc_now()
         count = 0
-        for prompt, engine_id, seed in itertools.product(project["prompts"], engine_ids, seeds):
+        # Group jobs by engine so memory-constrained GPUs do not reload models
+        # for every prompt when comparing multiple model sizes.
+        for engine_id, prompt, seed in itertools.product(engine_ids, project["prompts"], seeds):
             self.db.execute(
                 """INSERT INTO jobs(project_id,prompt_id,engine_id,seed,status,created_at)
                    VALUES(?,?,?,?,?,?)""",
@@ -352,18 +586,22 @@ class Service:
     def create_studio_request(
         self,
         text: str,
-        seed: int = 10,
+        seed: int = STUDIO_DEFAULT_SEED,
         engine_slug: str = STUDIO_ENGINE_SLUG,
         source: str = "studio",
+        quality_mode: str = LONG_FORM_QUALITY_MODE,
+        request_fingerprint: str | None = None,
     ) -> dict[str, Any]:
         normalized = text.strip()
         if not normalized:
             raise ValueError("합성할 대본을 입력하세요.")
-        chunks = split_script(normalized)
-        if not chunks:
+        speech_plan = plan_script(normalized)
+        if not speech_plan:
             raise ValueError("합성할 수 있는 문장이 없습니다.")
         if source not in {"studio", "external_api"}:
             raise ValueError("Unsupported Studio request source.")
+        if quality_mode not in {"standard", LONG_FORM_QUALITY_MODE}:
+            raise ValueError("Unsupported quality mode.")
         project = self.ensure_studio_project()
         engine = self.db.fetch_one(
             "SELECT * FROM engines WHERE slug=? AND enabled=1", (engine_slug,)
@@ -372,29 +610,126 @@ class Service:
             raise ValueError(f"사용 가능한 TTS 엔진이 없습니다: {engine_slug}")
         now = utc_now()
         request_id = self.db.execute(
-            """INSERT INTO studio_requests(project_id,original_text,seed,source,status,created_at)
-               VALUES(?,?,?,?,?,?)""",
-            (project["id"], normalized, int(seed), source, "queued", now),
+            """INSERT INTO studio_requests(
+                   project_id,original_text,seed,source,quality_mode,request_fingerprint,
+                   status,created_at
+               ) VALUES(?,?,?,?,?,?,?,?)""",
+            (
+                project["id"], normalized, int(seed), source, quality_mode,
+                request_fingerprint, "queued", now,
+            ),
         )
-        for position, chunk in enumerate(chunks, start=1):
-            prompt = self.add_prompt(project["id"], chunk, "studio")
+        for position, segment in enumerate(speech_plan, start=1):
+            prompt = self.add_prompt(project["id"], segment.text, "studio")
             job_id = self.db.execute(
                 """INSERT INTO jobs(project_id,prompt_id,engine_id,seed,status,created_at)
                    VALUES(?,?,?,?,?,?)""",
                 (project["id"], prompt["id"], engine["id"], int(seed), "queued", now),
             )
             self.db.execute(
-                """INSERT INTO studio_segments(request_id,position,text,prompt_id,job_id)
-                   VALUES(?,?,?,?,?)""",
-                (request_id, position, chunk, prompt["id"], job_id),
+                """INSERT INTO studio_segments(
+                       request_id,position,text,prompt_id,job_id,paragraph_index,
+                       sentence_count,semantic_role,paragraph_end,pause_after_ms
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    request_id,
+                    position,
+                    segment.text,
+                    prompt["id"],
+                    job_id,
+                    segment.paragraph_index,
+                    segment.sentence_count,
+                    segment.semantic_role,
+                    int(segment.paragraph_end),
+                    segment.pause_after_ms,
+                ),
             )
         return self.studio_request(request_id)
+
+    def external_tts_fingerprint(self, text: str) -> tuple[str, str]:
+        normalized = text.strip()
+        if not normalized:
+            raise ValueError("합성할 대본을 입력하세요.")
+        project = self.ensure_studio_project()
+        engine = self.db.fetch_one(
+            "SELECT * FROM engines WHERE slug=? AND enabled=1", (STUDIO_ENGINE_SLUG,)
+        )
+        if not engine:
+            raise ValueError(f"사용 가능한 TTS 엔진이 없습니다: {STUDIO_ENGINE_SLUG}")
+        fingerprint_data = {
+            "version": 4,
+            "text": normalized,
+            "seed": STUDIO_DEFAULT_SEED,
+            "quality_mode": LONG_FORM_QUALITY_MODE,
+            "engine_slug": engine["slug"],
+            "engine_version": engine["version"],
+            "engine_config": engine.get("config_json", "{}"),
+            "reference_sha256": project.get("reference_sha256"),
+            "reference_text": project.get("reference_text", ""),
+        }
+        digest = hashlib.sha256(json_dumps(fingerprint_data).encode("utf-8")).hexdigest()
+        return normalized, digest
+
+    def reusable_external_tts_request(self, text: str) -> dict[str, Any] | None:
+        normalized, fingerprint = self.external_tts_fingerprint(text)
+        project = self.ensure_studio_project()
+        engine = self.db.fetch_one(
+            "SELECT id FROM engines WHERE slug=? AND enabled=1", (STUDIO_ENGINE_SLUG,)
+        )
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=EXTERNAL_REUSE_WINDOW_HOURS)).isoformat(
+            timespec="seconds"
+        )
+        row = self.db.fetch_one(
+            """SELECT DISTINCT sr.id,sr.status,sr.output_path,sr.request_fingerprint
+               FROM studio_requests sr
+               JOIN studio_segments ss ON ss.request_id=sr.id
+               JOIN jobs j ON j.id=ss.job_id
+               WHERE sr.source='external_api' AND sr.original_text=?
+                 AND sr.project_id=? AND sr.seed=? AND sr.quality_mode=?
+                 AND j.engine_id=?
+                 AND sr.request_fingerprint=?
+                 AND (
+                   sr.status IN ('queued','running') OR
+                   (sr.status='succeeded' AND sr.finished_at>=?)
+                 )
+               ORDER BY CASE sr.status
+                 WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,
+                 sr.id DESC LIMIT 1""",
+            (
+                normalized, project["id"], STUDIO_DEFAULT_SEED, LONG_FORM_QUALITY_MODE,
+                engine["id"], fingerprint, cutoff,
+            ),
+        )
+        if not row:
+            return None
+        if row["status"] == "succeeded" and (
+            not row.get("output_path") or not Path(row["output_path"]).is_file()
+        ):
+            return None
+        return self.external_tts_request(row["id"])
+
+    def create_external_tts_request(self, text: str) -> dict[str, Any]:
+        normalized, fingerprint = self.external_tts_fingerprint(text)
+        return self.create_studio_request(
+            normalized,
+            STUDIO_DEFAULT_SEED,
+            source="external_api",
+            request_fingerprint=fingerprint,
+        )
 
     def external_tts_request(self, request_id: int) -> dict[str, Any]:
         request = self.studio_request(request_id)
         if request.get("source") != "external_api":
             raise KeyError("External TTS request not found.")
         succeeded = request["status"] == "succeeded" and bool(request.get("output_path"))
+        chapters = []
+        for chapter in request.get("chapters", []):
+            item = dict(chapter)
+            item["audio_url"] = (
+                f"/v1/tts/{request_id}/chapters/{chapter['position']}/audio"
+                if chapter["status"] == "succeeded" else None
+            )
+            chapters.append(item)
         return {
             "id": request["id"],
             "status": request["status"],
@@ -406,6 +741,12 @@ class Service:
             "created_at": request["created_at"],
             "started_at": request.get("started_at"),
             "finished_at": request.get("finished_at"),
+            "quality_mode": request.get("quality_mode"),
+            "quality_control": request.get("quality_control"),
+            "speech_plan": request.get("speech_plan"),
+            "chapters": chapters,
+            "download_count": int(request.get("download_count") or 0),
+            "last_downloaded_at": request.get("last_downloaded_at"),
             "status_url": f"/v1/tts/{request_id}",
             "audio_url": f"/v1/tts/{request_id}/audio" if succeeded else None,
         }
@@ -414,6 +755,19 @@ class Service:
         self.external_tts_request(request_id)
         return self.studio_audio_path(request_id)
 
+    def record_external_tts_download(self, request_id: int) -> None:
+        self.external_tts_audio_path(request_id)
+        self.db.execute(
+            """UPDATE studio_requests
+               SET download_count=download_count+1,last_downloaded_at=?
+               WHERE id=?""",
+            (utc_now(), request_id),
+        )
+
+    def external_tts_chapter_audio_path(self, request_id: int, chapter_position: int) -> Path:
+        self.external_tts_request(request_id)
+        return self.studio_chapter_audio_path(request_id, chapter_position)
+
     def active_external_tts_count(self) -> int:
         row = self.db.fetch_one(
             """SELECT COUNT(*) AS count FROM studio_requests
@@ -421,20 +775,179 @@ class Service:
         )
         return int(row["count"] if row else 0)
 
+    def recover_interrupted_jobs(self) -> int:
+        """Return work left running by a previous VoiceBench process to the queue."""
+        self.db.execute(
+            """UPDATE jobs SET status='cancelled',finished_at=?
+               WHERE status='running' AND id IN (
+                 SELECT ss.job_id FROM studio_segments ss
+                 JOIN studio_requests sr ON sr.id=ss.request_id
+                 WHERE sr.status='cancelled'
+               )""",
+            (utc_now(),),
+        )
+        row = self.db.fetch_one("SELECT COUNT(*) AS count FROM jobs WHERE status='running'")
+        recovered = int(row["count"] if row else 0)
+        self.db.execute(
+            "UPDATE jobs SET status='queued',started_at=NULL WHERE status='running'"
+        )
+        if recovered:
+            self.db.execute(
+                """UPDATE studio_requests SET status='queued'
+                   WHERE status='running' AND id IN (
+                     SELECT DISTINCT request_id FROM studio_segments ss
+                     JOIN jobs j ON j.id=ss.job_id WHERE j.status='queued'
+                   )"""
+            )
+        return recovered
+
+    def cancel_studio_request(self, request_id: int) -> dict[str, Any]:
+        request = self.studio_request(request_id)
+        if request["status"] in {"succeeded", "failed", "cancelled"}:
+            return request
+        self.db.execute(
+            """UPDATE jobs SET status='cancelled',finished_at=?
+               WHERE status='queued' AND id IN (
+                   SELECT job_id FROM studio_segments WHERE request_id=?
+               )""",
+            (utc_now(), request_id),
+        )
+        self.db.execute(
+            "UPDATE studio_requests SET status='cancelled',finished_at=? WHERE id=?",
+            (utc_now(), request_id),
+        )
+        return self.studio_request(request_id)
+
     def studio_request(self, request_id: int) -> dict[str, Any]:
         request = self.db.fetch_one(
-            """SELECT sr.*,
+            """SELECT sr.*,MIN(e.slug) AS engine_slug,MIN(e.name) AS engine_name,
                COUNT(ss.id) AS segment_count,
                SUM(CASE WHEN j.status='succeeded' THEN 1 ELSE 0 END) AS completed_segments,
                SUM(CASE WHEN j.status='failed' THEN 1 ELSE 0 END) AS failed_segments
                FROM studio_requests sr
                LEFT JOIN studio_segments ss ON ss.request_id=sr.id
                LEFT JOIN jobs j ON j.id=ss.job_id
+               LEFT JOIN engines e ON e.id=j.engine_id
                WHERE sr.id=? GROUP BY sr.id""",
             (request_id,),
         )
         if not request:
             raise KeyError("TTS 요청을 찾을 수 없습니다.")
+        request["segment_count"] = int(request["segment_count"] or 0)
+        request["completed_segments"] = int(request["completed_segments"] or 0)
+        request["failed_segments"] = int(request["failed_segments"] or 0)
+        pending = self.db.fetch_one(
+            """SELECT MIN(j.id) AS first_pending_job,
+                      SUM(CASE WHEN j.status='queued' THEN 1 ELSE 0 END) AS queued_segments,
+                      SUM(CASE WHEN j.status='running' THEN 1 ELSE 0 END) AS running_segments
+               FROM studio_segments ss JOIN jobs j ON j.id=ss.job_id
+               WHERE ss.request_id=?""",
+            (request_id,),
+        ) or {}
+        request["queued_segments"] = int(pending.get("queued_segments") or 0)
+        request["running_segments"] = int(pending.get("running_segments") or 0)
+        first_pending_job = pending.get("first_pending_job")
+        if first_pending_job:
+            ahead = self.db.fetch_one(
+                """SELECT COUNT(*) AS count FROM jobs
+                   WHERE status IN ('queued','running') AND id < ?""",
+                (first_pending_job,),
+            )
+            request["jobs_ahead"] = int(ahead["count"] if ahead else 0)
+        else:
+            request["jobs_ahead"] = 0
+        segment_rows = self.db.fetch_all(
+            """SELECT ss.position,ss.text,j.status,r.metrics_json,
+                      ss.paragraph_index,ss.sentence_count,ss.semantic_role,
+                      ss.paragraph_end,ss.pause_after_ms
+               FROM studio_segments ss JOIN jobs j ON j.id=ss.job_id
+               LEFT JOIN runs r ON r.job_id=j.id
+               WHERE ss.request_id=? ORDER BY ss.position""",
+            (request_id,),
+        )
+        quality_control: dict[str, Any] = {
+            "enabled": request.get("quality_mode") == LONG_FORM_QUALITY_MODE,
+            "checked_segments": 0,
+            "regenerated_segments": 0,
+            "fallback_selected_segments": 0,
+            "warning_segments": 0,
+            "total_attempts": 0,
+            "selected_seed_counts": {},
+        }
+        for segment in segment_rows:
+            if not segment.get("metrics_json"):
+                continue
+            try:
+                metrics = json.loads(segment["metrics_json"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            quality = metrics.get("quality_control") or {}
+            if not quality.get("enabled"):
+                continue
+            quality_control["checked_segments"] += 1
+            quality_control["total_attempts"] += int(quality.get("attempt_count") or 0)
+            if quality.get("regenerated"):
+                quality_control["regenerated_segments"] += 1
+            if quality.get("fallback_selected"):
+                quality_control["fallback_selected_segments"] += 1
+            if quality.get("status") in {"best_available", "waveform_only"}:
+                quality_control["warning_segments"] += 1
+            selected_seed = quality.get("selected_seed")
+            if selected_seed is not None:
+                key = str(selected_seed)
+                quality_control["selected_seed_counts"][key] = (
+                    quality_control["selected_seed_counts"].get(key, 0) + 1
+                )
+        request["quality_control"] = quality_control
+        role_counts: dict[str, int] = {}
+        for segment in segment_rows:
+            role = str(segment.get("semantic_role") or "statement")
+            role_counts[role] = role_counts.get(role, 0) + 1
+        request["speech_plan"] = {
+            "version": 1,
+            "paragraph_count": max(
+                (int(segment.get("paragraph_index") or 1) for segment in segment_rows),
+                default=0,
+            ),
+            "segment_count": len(segment_rows),
+            "sentence_count": sum(
+                int(segment.get("sentence_count") or 0) for segment in segment_rows
+            ),
+            "paragraph_breaks": sum(
+                bool(segment.get("paragraph_end")) for segment in segment_rows[:-1]
+            ),
+            "role_counts": role_counts,
+        }
+        request["chapters"] = []
+        if request.get("quality_mode") == LONG_FORM_QUALITY_MODE:
+            for position, chapter in enumerate(partition_studio_chapters(segment_rows), start=1):
+                statuses = [item["status"] for item in chapter]
+                chapter_path = (
+                    self.paths.artifacts / "studio" / f"request-{request_id}-chapter-{position:02d}.wav"
+                )
+                if all(status == "succeeded" for status in statuses):
+                    status = "succeeded" if chapter_path.exists() else "running"
+                elif any(status == "failed" for status in statuses):
+                    status = "failed"
+                elif any(status == "running" for status in statuses):
+                    status = "running"
+                elif any(status == "cancelled" for status in statuses):
+                    status = "cancelled"
+                else:
+                    status = "queued"
+                request["chapters"].append(
+                    {
+                        "position": position,
+                        "status": status,
+                        "segment_count": len(chapter),
+                        "completed_segments": sum(s == "succeeded" for s in statuses),
+                        "character_count": sum(len(item["text"]) for item in chapter),
+                        "audio_url": (
+                            f"/api/studio/{request_id}/chapters/{position}/audio"
+                            if status == "succeeded" else None
+                        ),
+                    }
+                )
         request["audio_url"] = (
             f"/api/studio/audio/{request_id}" if request.get("output_path") else None
         )
@@ -449,18 +962,36 @@ class Service:
             "SELECT id,slug,name,version,enabled FROM engines WHERE slug=?",
             (STUDIO_ENGINE_SLUG,),
         )
+        studio_engines = self.db.fetch_all(
+            """SELECT id,slug,name,version,enabled FROM engines
+               WHERE enabled=1 AND (
+                 slug='qwen3-tts-06b-pascal' OR slug LIKE 'qwen3-tts-17b-pascal%'
+               )
+               ORDER BY CASE slug
+                 WHEN 'qwen3-tts-17b-pascal-expressive' THEN 0
+                 WHEN 'qwen3-tts-17b-pascal' THEN 1
+                 WHEN 'qwen3-tts-17b-pascal-stable' THEN 2
+                 ELSE 3 END"""
+        )
         requests = self.db.fetch_all(
             "SELECT id FROM studio_requests ORDER BY id DESC LIMIT 50"
         )
+        processing = self.db.fetch_one(
+            """SELECT ss.request_id FROM jobs j JOIN studio_segments ss ON ss.job_id=j.id
+               WHERE j.status='running' ORDER BY j.started_at,j.id LIMIT 1"""
+        )
         return {
-            "available": available and bool(engine and engine["enabled"]),
+            "available": available and bool(studio_engines),
             "voice": {
                 "name": "내 목소리 · B 레퍼런스",
                 "duration_seconds": 9.95,
                 "reference_path": str(reference) if available else None,
             },
             "engine": engine,
+            "default_engine_slug": STUDIO_ENGINE_SLUG,
+            "studio_engines": studio_engines,
             "project_id": project["id"] if project else None,
+            "processing_request_id": processing["request_id"] if processing else None,
             "requests": [self.studio_request(row["id"]) for row in requests],
         }
 
@@ -472,4 +1003,20 @@ class Service:
         studio_root = (self.paths.artifacts / "studio").resolve()
         if studio_root not in path.parents:
             raise ValueError("허용되지 않은 Studio 출력 경로입니다.")
+        return path
+
+    def studio_chapter_audio_path(self, request_id: int, chapter_position: int) -> Path:
+        request = self.studio_request(request_id)
+        chapter = next(
+            (item for item in request.get("chapters", []) if item["position"] == chapter_position),
+            None,
+        )
+        if not chapter or chapter["status"] != "succeeded":
+            raise FileNotFoundError("아직 완성된 장 음성이 없습니다.")
+        path = (
+            self.paths.artifacts / "studio" / f"request-{request_id}-chapter-{chapter_position:02d}.wav"
+        ).resolve()
+        studio_root = (self.paths.artifacts / "studio").resolve()
+        if studio_root not in path.parents or not path.exists():
+            raise FileNotFoundError("장 음성 파일을 찾을 수 없습니다.")
         return path
