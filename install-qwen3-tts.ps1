@@ -15,7 +15,9 @@ function Assert-NativeSuccess([string]$Step) {
     }
 }
 
-if ((Get-PSDrive -Name C).Free -lt 12GB) {
+$rootDrive = [IO.Path]::GetPathRoot($root).TrimEnd('\').TrimEnd(':')
+$rootDriveInfo = Get-PSDrive -Name $rootDrive -ErrorAction SilentlyContinue
+if ($rootDriveInfo -and $rootDriveInfo.Free -lt 12GB) {
     throw 'At least 12 GB of free space is required to install and cache Qwen3-TTS safely.'
 }
 
@@ -52,9 +54,15 @@ Set-Location $root
 Assert-NativeSuccess 'VoiceBench engine registration'
 
 if ($DownloadModel) {
-    Write-Host 'Downloading Qwen3-TTS 0.6B model weights...'
-    & $enginePython adapters\qwen3_tts.py --download-only
-    Assert-NativeSuccess 'Qwen3-TTS model download'
+    Write-Host 'Downloading the production Qwen3-TTS 1.7B model weights...'
+    & $enginePython adapters\qwen3_tts.py `
+        --download-only `
+        --model 'Qwen/Qwen3-TTS-12Hz-1.7B-Base'
+    Assert-NativeSuccess 'Qwen3-TTS 1.7B model download'
+
+    Write-Host 'Downloading the Whisper Base quality-control model...'
+    & $enginePython -c "from huggingface_hub import snapshot_download; print(snapshot_download('openai/whisper-base'))"
+    Assert-NativeSuccess 'Whisper Base model download'
 }
 
 Write-Host 'Qwen3-TTS installation and VoiceBench registration are complete.'

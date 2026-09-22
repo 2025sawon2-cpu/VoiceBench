@@ -1,6 +1,6 @@
 # VoiceBench session handoff
 
-Updated: 2026-09-05 (Asia/Seoul)
+Updated: 2026-09-23 (Asia/Seoul)
 
 This file is the starting point for the next Codex session. Read it before making changes. Do not use Pinokio or Gepeto in this project.
 
@@ -142,23 +142,11 @@ Normal LF-to-CRLF warnings may appear on Windows and are not test failures.
 
 Last committed revisions:
 
+- `6b2df00 feat: improve LAN TTS long-form quality`
 - `23f9cc7 docs: add AI usage guide for external TTS API`
 - `2582685 feat: build local voice cloning TTS service`
 
-There are substantial uncommitted changes after those commits, including the 1.7B engines, Seed 13 defaults, LAN/MCP integration, queue/cancellation fixes, long-form HQ chapters, UI changes, tests, and documentation. Preserve them. Do not reset, checkout, or overwrite the dirty worktree. Inspect `git status` and `git diff` before editing overlapping files.
-
-Current untracked project files include:
-
-- `AGENTS.md` (automatic startup instructions for new sessions)
-- `adapters/whisper_quality_worker.py`
-- `docs/claude-lan-mcp.md`
-- `host-lan.cmd`
-- `host-lan.ps1`
-- `tools/voicebench_mcp.py`
-- `voicebench/quality.py`
-- this handoff file
-
-No commit was created as part of this handoff.
+The 1.7B engines, Seed 13 defaults, LAN/MCP integration, queue/cancellation fixes, long-form HQ chapters, semantic planning, automatic quality control, UI changes, tests, and documentation are included in `6b2df00`. Preserve any newer working-tree changes and inspect `git status` before editing overlapping files.
 
 ## Known cleanup item
 
@@ -202,7 +190,13 @@ No commit was created as part of this handoff.
 
 - External request `#72`: succeeded, 42 semantic segments, 751.43 seconds of audio, downloaded once. All 42 Whisper checks passed on Seed 13 with no retry or warning; average CER 0.0415 and maximum CER 0.1026.
 - External request `#73`: succeeded, 45 semantic segments, 816.02 seconds of audio, downloaded once. All 45 Whisper checks passed on Seed 13 with no retry or warning; average CER 0.0725 and maximum CER 0.2614.
-- No request newer than `#73` exists, and the queue was empty on 2026-09-05.
+- External request `#75`: 267-character emotional-continuity sample, 2 segments, 35.29 seconds. Both segments passed on Seed 13 without retry. The measured join had the planned 360ms pause and no waveform discontinuity; the second segment began about 1.35 semitones and 1.31dB above the end of the first, confirming that mild prosody reset remains possible.
+
+## Windows clone installation
+
+- `docs\windows-install.md` documents a clean Windows clone, model setup, private reference transfer, local/LAN launch, MCP/API configuration, updates, and troubleshooting.
+- `setup-windows.cmd` orchestrates the application environment, isolated Qwen engine environment, optional production model downloads, optional local reference installation, and the full regression suite.
+- Personal reference audio, transcripts, generated audio, API keys, passwords, model caches, and virtual environments remain excluded from Git.
 
 ## Recommended next development priority
 

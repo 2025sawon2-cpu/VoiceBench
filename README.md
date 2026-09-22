@@ -12,7 +12,7 @@ VoiceBench는 한 대의 로컬 PC에서 보이스 클로닝 TTS 엔진들을 �
 .\start.cmd
 ```
 
-브라우저의 첫 화면에서 대본을 입력하고 `음성 만들기`를 누릅니다. 별도의 글자 수 제한은 없으며, 긴 대본은 90자 안팎의 안전한 조각으로 나누어 생성한 뒤 약 0.22초 간격을 넣은 WAV 하나로 자동 결합합니다. 완성된 결과는 화면에서 재생하거나 WAV로 저장할 수 있습니다.
+브라우저의 첫 화면에서 대본을 입력하고 `음성 만들기`를 누릅니다. 별도의 글자 수 제한은 없으며, 긴 대본은 약 180자의 문장 중심 의미 단위로 나누어 생성한 뒤 문장부호와 문단에 맞는 호흡을 넣어 WAV 하나로 자동 결합합니다. 완성된 결과는 화면에서 재생하거나 WAV로 저장할 수 있습니다.
 
 Qwen 모델은 첫 요청에서 한 번만 GPU에 올리고 서버가 실행되는 동안 재사용합니다. 현재 PC 실측으로 첫 조각은 모델 준비를 포함해 약 75초, 같은 요청의 다음 조각은 약 18~25초였습니다. 실행 창을 닫으면 워커가 종료되고 GPU 메모리가 반환됩니다.
 
@@ -44,7 +44,19 @@ Mock 엔진은 하네스 자체를 시험하는 톤 생성기이며 실제 TTS�
 
 현재 PC에는 독립 Python 3.10이 확인되어 있으므로 추가 시스템 설치 없이 실행할 수 있습니다.
 
-## 최초 실행
+## 새 Windows PC 설치
+
+저장소를 복제한 새 PC에서는 다음 명령으로 애플리케이션, Qwen3-TTS 엔진, 생산 모델과 품질 검사 모델을 설치할 수 있습니다.
+
+```powershell
+git clone <저장소-URL> VoiceBench
+cd VoiceBench
+.\setup-windows.cmd -DownloadModels
+```
+
+개인 레퍼런스 음성은 Git에 포함되지 않습니다. 필요한 파일 복사, LAN 방화벽, MCP/API 설정을 포함한 전체 절차는 [Windows 새 PC 설치 가이드](docs/windows-install.md)를 참고하세요.
+
+## 기존 PC 최초 실행
 
 PowerShell에서 다음 명령을 실행합니다.
 
@@ -92,15 +104,15 @@ PowerShell에서 다음 명령을 실행합니다.
 
 명령은 셸을 통하지 않고 argv 배열 그대로 실행합니다. 지원 placeholder는 `{text}`, `{reference}`, `{reference_text}`, `{output}`, `{seed}`, `{language}`입니다.
 
-## Qwen3-TTS 0.6B 설치
+## Qwen3-TTS 설치
 
-GTX 1070 Ti용으로 PyTorch 2.6.0/CUDA 12.6과 eager attention을 사용하는 격리 환경을 설치하고 엔진을 등록합니다. FlashAttention은 Pascal GPU에서 지원되지 않으므로 설치하지 않습니다. 어댑터는 compute capability 6.x에서 FP16 생성이 불안정한 것을 실제 확인했기 때문에 자동으로 FP32 안전 경로를 사용합니다.
+GTX 1070 Ti용으로 PyTorch 2.6.0/CUDA 12.6과 eager attention을 사용하는 격리 환경을 설치하고 Qwen3-TTS 0.6B 및 1.7B 엔진들을 등록합니다. FlashAttention은 Pascal GPU에서 지원되지 않으므로 설치하지 않습니다. 생산 기본값은 1.7B FP16/eager 표현형 프리셋이며, 0.6B 어댑터는 compute capability 6.x에서 FP32 안전 경로를 사용합니다.
 
 ```powershell
 .\install-qwen3-tts.cmd -DownloadModel
 ```
 
-모델 가중치를 나중에 받을 경우 `-DownloadModel`을 생략할 수 있습니다. 첫 합성 때 모델 캐시에 가중치가 없으면 자동으로 다운로드합니다.
+`-DownloadModel`은 생산 Qwen3-TTS 1.7B와 Whisper Base 품질 검사 모델을 미리 다운로드합니다. 생략하면 Qwen 모델은 첫 합성 때 자동 다운로드되며, Whisper Base가 없을 때는 품질 검사가 파형 검사만으로 축소됩니다.
 
 ### 현재 PC 실측
 
