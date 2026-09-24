@@ -40,13 +40,19 @@ function studioStatusLabel(status) {
   return ({queued:'대기 중',running:'생성 중',succeeded:'완료',failed:'실패',cancelled:'취소'})[status] || status;
 }
 
+function renderStudioEngineState() {
+  const engine = app.studio?.studio_engines?.find(item => item.slug === $('#studio-engine').value);
+  const available = app.studio?.available && Boolean(engine);
+  const quality = engine?.slug.startsWith('qwen3-tts-') ? '자동 발음·파형 검사' : '파형 검사 · 발음 자동 재시도 없음';
+  $('#studio-engine-state').textContent = available ? `${engine.name} · ${quality}` : '엔진 준비 필요';
+  $('#studio-engine-state').classList.toggle('muted', !available);
+  $('#studio-generate').disabled = !available;
+}
+
 function renderStudio() {
   const studio = app.studio;
   if (!studio) return;
   $('#studio-voice-name').textContent = studio.voice?.name || '레퍼런스 미등록';
-  $('#studio-engine-state').textContent = studio.available ? `${studio.engine.name} · 자동 품질 검사` : '엔진 준비 필요';
-  $('#studio-engine-state').classList.toggle('muted', !studio.available);
-  $('#studio-generate').disabled = !studio.available;
   const engineSelect = $('#studio-engine');
   const selectedEngine = engineSelect.value;
   engineSelect.innerHTML = (studio.studio_engines || []).map(engine =>
@@ -57,6 +63,7 @@ function renderStudio() {
   } else if ([...engineSelect.options].some(option => option.value === studio.default_engine_slug)) {
     engineSelect.value = studio.default_engine_slug;
   }
+  renderStudioEngineState();
 
   const active = studio.requests.find(item => item.id === studio.processing_request_id)
     || studio.requests.find(item => item.status === 'queued');
@@ -194,10 +201,23 @@ function renderEngines() {
   $('#engine-list').innerHTML = app.state.engines.map(engine => `<div class="engine-card"><strong>${escapeHtml(engine.name)}</strong><small>${escapeHtml(engine.slug)} · ${escapeHtml(engine.kind)} · ${escapeHtml(engine.version || 'version 미지정')}</small></div>`).join('');
 }
 
+function runPerformanceLabel(metrics) {
+  const parts = [`전체 ${Number(metrics.wall_seconds || 0).toFixed(1)}s`];
+  const measured = metrics.engine_performance;
+  if (measured?.generate_seconds != null) parts.push(`합성 ${Number(measured.generate_seconds).toFixed(1)}s`);
+  if (measured?.peak_allocated_mb != null) {
+    parts.push(`모델 최대 할당 ${Number(measured.peak_allocated_mb).toFixed(0)}MB`);
+  } else if (metrics.gpu?.peak_memory_used_mb != null) {
+    parts.push(`GPU 전체 최대 ${Number(metrics.gpu.peak_memory_used_mb).toFixed(0)}MB`);
+  }
+  if (metrics.gpu?.peak_engine_delta_mb != null) parts.push(`작업 중 증가 ${Number(metrics.gpu.peak_engine_delta_mb).toFixed(0)}MB`);
+  return parts.join(' · ');
+}
+
 function renderRuns() {
   const body = $('#runs-table');
   if (!app.runs.length) { body.innerHTML = '<tr><td colspan="8" class="empty-state">아직 결과가 없습니다.</td></tr>'; return; }
-  body.innerHTML = app.runs.slice(0, 200).map(run => `<tr><td><code>${run.anonymous_code}</code></td><td>${run.position}. ${escapeHtml(run.original_text.slice(0, 55))}</td><td>${escapeHtml(run.engine_name)}</td><td>${run.seed}</td><td>${Number(run.duration_seconds || 0).toFixed(1)}s</td><td>${Number(run.metrics.wall_seconds || 0).toFixed(1)}s · ${run.metrics.gpu?.peak_engine_delta_mb ?? '-'}MB</td><td><span class="tag ${run.metrics.hard_reject ? 'muted' : ''}">${run.metrics.hard_reject ? '검사 실패' : '통과'}</span></td><td><audio controls preload="none" src="/api/audio/${run.id}"></audio></td></tr>`).join('');
+  body.innerHTML = app.runs.slice(0, 200).map(run => `<tr><td><code>${run.anonymous_code}</code></td><td>${run.position}. ${escapeHtml(run.original_text.slice(0, 55))}</td><td>${escapeHtml(run.engine_name)}</td><td>${run.seed}</td><td>${Number(run.duration_seconds || 0).toFixed(1)}s</td><td>${runPerformanceLabel(run.metrics)}</td><td><span class="tag ${run.metrics.hard_reject ? 'muted' : ''}">${run.metrics.hard_reject ? '검사 실패' : '통과'}</span></td><td><audio controls preload="none" src="/api/audio/${run.id}"></audio></td></tr>`).join('');
 }
 
 async function renderScores() {
@@ -249,6 +269,7 @@ function escapeHtml(value) {
 }
 
 $$('.nav-item').forEach(node => node.onclick = () => switchView(node.dataset.view));
+$('#studio-engine').onchange = renderStudioEngineState;
 $('#studio-text').oninput = event => {
   const text = event.target.value;
   const length = text.length;

@@ -17,6 +17,7 @@ from voicebench.api import VoiceBenchServer
 from voicebench.audio import concatenate_wavs, inspect_wav, make_mock_wav
 from voicebench.config import Paths
 from voicebench.db import Database
+from voicebench.engines import _worker_matches
 from voicebench.runner import JobRunner
 from voicebench.quality import (
     character_error_rate,
@@ -56,6 +57,18 @@ class HarnessTests(unittest.TestCase):
         path = self.paths.data / "source.wav"
         make_mock_wav(path, "레퍼런스 음성", 11)
         return path.read_bytes()
+
+    def test_worker_reuse_requires_matching_attention(self) -> None:
+        health = {
+            "status": "ready",
+            "model": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+            "attention": "eager",
+        }
+        model = health["model"]
+        self.assertTrue(_worker_matches(health, model, "eager"))
+        self.assertFalse(_worker_matches(health, model, "sdpa"))
+        self.assertFalse(_worker_matches(health, "another-model", "eager"))
+        self.assertFalse(_worker_matches({"status": "ready", "model": model}, model, "sdpa"))
 
     def test_audio_inspection(self) -> None:
         path = self.paths.data / "audio.wav"

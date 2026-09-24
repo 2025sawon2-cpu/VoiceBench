@@ -483,7 +483,17 @@ class Service:
         )
         for row in rows:
             row["metrics"] = json.loads(row.pop("metrics_json") or "{}")
-            row.pop("manifest_json", None)
+            manifest = json.loads(row.pop("manifest_json", None) or "{}")
+            worker = (manifest.get("adapter") or {}).get("worker") or {}
+            # Expose timing/memory measurements without exposing the private
+            # reference transcript and filesystem paths in the full manifest.
+            performance = {
+                key: worker[key]
+                for key in ("load_seconds", "generate_seconds", "realtime_factor", "peak_allocated_mb")
+                if isinstance(worker.get(key), (int, float))
+            }
+            if performance:
+                row["metrics"]["engine_performance"] = performance
         return rows
 
     def next_comparison(self, project_id: int) -> dict[str, Any] | None:
@@ -966,6 +976,11 @@ class Service:
             """SELECT id,slug,name,version,enabled FROM engines
                WHERE enabled=1 AND (
                  slug='qwen3-tts-06b-pascal' OR slug LIKE 'qwen3-tts-17b-pascal%'
+                 OR slug='chatterbox-multilingual-v3-experimental'
+                 OR slug='voxcpm2-experimental'
+                 OR slug='voxcpm2-hq-experimental'
+                 OR slug IN ('fish-s2-pro-experimental', 'zonos2-q8-experimental')
+                 OR slug IN ('voxcpm2-experimental-bright', 'voxcpm2-experimental-energetic')
                )
                ORDER BY CASE slug
                  WHEN 'qwen3-tts-17b-pascal-expressive' THEN 0

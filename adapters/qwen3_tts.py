@@ -26,6 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--language", default="ko")
     parser.add_argument("--model", default=os.environ.get("QWEN3_TTS_MODEL", DEFAULT_MODEL))
     parser.add_argument("--dtype", choices=("auto", "fp16", "fp32"), default="auto")
+    parser.add_argument("--attention", choices=("eager", "sdpa"), default="eager")
     parser.add_argument("--download-only", action="store_true")
     return parser.parse_args()
 
@@ -68,13 +69,13 @@ def main() -> None:
     dtype = torch.float32 if dtype_name == "fp32" else torch.float16
     print(
         f"Loading {args.model} on {torch.cuda.get_device_name(0)} "
-        f"(compute capability {capability[0]}.{capability[1]}, {dtype_name.upper()}/eager)"
+        f"(compute capability {capability[0]}.{capability[1]}, {dtype_name.upper()}/{args.attention})"
     )
     model = Qwen3TTSModel.from_pretrained(
         args.model,
         device_map="cuda:0",
         dtype=dtype,
-        attn_implementation="eager",
+        attn_implementation=args.attention,
         low_cpu_mem_usage=True,
     )
 

@@ -23,7 +23,9 @@ LANGUAGES = {
 class QwenWorkerServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int], model_name: str, dtype_name: str):
+    def __init__(
+        self, address: tuple[str, int], model_name: str, dtype_name: str, attention: str
+    ):
         import torch
         from qwen_tts import Qwen3TTSModel
 
@@ -34,19 +36,20 @@ class QwenWorkerServer(ThreadingHTTPServer):
             dtype_name = "fp32" if capability[0] < 7 else "fp16"
         self.torch = torch
         self.dtype_name = dtype_name
+        self.attention = attention
         self.model_name = model_name
         self.device_name = torch.cuda.get_device_name(0)
         dtype = torch.float32 if dtype_name == "fp32" else torch.float16
         print(
             f"Loading {model_name} on {self.device_name} "
-            f"(CC {capability[0]}.{capability[1]}, {dtype_name.upper()}/eager)",
+            f"(CC {capability[0]}.{capability[1]}, {dtype_name.upper()}/{attention})",
             flush=True,
         )
         self.model = Qwen3TTSModel.from_pretrained(
             model_name,
             device_map="cuda:0",
             dtype=dtype,
-            attn_implementation="eager",
+            attn_implementation=attention,
             low_cpu_mem_usage=True,
         )
         self.prompt_cache: dict[tuple[str, str], Any] = {}
@@ -125,6 +128,7 @@ class QwenWorkerHandler(BaseHTTPRequestHandler):
                 "status": "ready",
                 "model": self.server.model_name,
                 "dtype": self.server.dtype_name,
+                "attention": self.server.attention,
                 "gpu": self.server.device_name,
                 "prompt_cache_entries": len(self.server.prompt_cache),
             }
@@ -161,8 +165,9 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8790)
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--dtype", choices=("auto", "fp16", "fp32"), default="auto")
+    parser.add_argument("--attention", choices=("eager", "sdpa"), default="eager")
     args = parser.parse_args()
-    server = QwenWorkerServer((args.host, args.port), args.model, args.dtype)
+    server = QwenWorkerServer((args.host, args.port), args.model, args.dtype, args.attention)
     print(f"Qwen3-TTS worker ready at http://{args.host}:{args.port}", flush=True)
     try:
         server.serve_forever(poll_interval=0.25)

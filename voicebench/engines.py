@@ -64,10 +64,17 @@ def _worker_health(health_url: str) -> dict[str, Any] | None:
         return None
 
 
-def _worker_matches(health: dict[str, Any] | None, expected_model: str | None) -> bool:
+def _worker_matches(
+    health: dict[str, Any] | None,
+    expected_model: str | None,
+    expected_attention: str | None,
+) -> bool:
     if not health or health.get("status") != "ready":
         return False
-    return not expected_model or health.get("model") == expected_model
+    return (
+        (not expected_model or health.get("model") == expected_model)
+        and (not expected_attention or health.get("attention") == expected_attention)
+    )
 
 
 def _ensure_worker(config: dict[str, Any], environment: dict[str, str]) -> None:
@@ -75,11 +82,12 @@ def _ensure_worker(config: dict[str, Any], environment: dict[str, str]) -> None:
     endpoint = str(worker["endpoint"])
     health_url = str(worker["health_url"])
     expected_model = worker.get("model")
-    if _worker_matches(_worker_health(health_url), expected_model):
+    expected_attention = worker.get("attention")
+    if _worker_matches(_worker_health(health_url), expected_model, expected_attention):
         return
     with _worker_lock:
         health = _worker_health(health_url)
-        if _worker_matches(health, expected_model):
+        if _worker_matches(health, expected_model, expected_attention):
             return
         previous = _workers.get(endpoint)
         if health and health.get("status") == "ready":
@@ -116,7 +124,7 @@ def _ensure_worker(config: dict[str, Any], environment: dict[str, str]) -> None:
         _workers[endpoint] = handle
         deadline = time.time() + float(worker.get("startup_timeout_seconds", 240))
         while time.time() < deadline:
-            if _worker_matches(_worker_health(health_url), expected_model):
+            if _worker_matches(_worker_health(health_url), expected_model, expected_attention):
                 return
             if process.poll() is not None:
                 log_stream.flush()

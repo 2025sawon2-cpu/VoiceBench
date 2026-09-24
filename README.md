@@ -106,7 +106,7 @@ PowerShell에서 다음 명령을 실행합니다.
 
 ## Qwen3-TTS 설치
 
-GTX 1070 Ti용으로 PyTorch 2.6.0/CUDA 12.6과 eager attention을 사용하는 격리 환경을 설치하고 Qwen3-TTS 0.6B 및 1.7B 엔진들을 등록합니다. FlashAttention은 Pascal GPU에서 지원되지 않으므로 설치하지 않습니다. 생산 기본값은 1.7B FP16/eager 표현형 프리셋이며, 0.6B 어댑터는 compute capability 6.x에서 FP32 안전 경로를 사용합니다.
+PyTorch 2.6.0/CUDA 12.6 격리 환경을 설치하고 Qwen3-TTS 0.6B 및 1.7B 엔진들을 등록합니다. 생산 기본값은 1.7B FP16/SDPA 표현형 프리셋입니다. 0.6B 비교 엔진은 기존 eager attention을 유지하며, compute capability 6.x에서 FP32 안전 경로를 사용합니다. 별도 FlashAttention 2 패키지는 설치하지 않습니다.
 
 ```powershell
 .\install-qwen3-tts.cmd -DownloadModel
@@ -114,7 +114,37 @@ GTX 1070 Ti용으로 PyTorch 2.6.0/CUDA 12.6과 eager attention을 사용하는 
 
 `-DownloadModel`은 생산 Qwen3-TTS 1.7B와 Whisper Base 품질 검사 모델을 미리 다운로드합니다. 생략하면 Qwen 모델은 첫 합성 때 자동 다운로드되며, Whisper Base가 없을 때는 품질 검사가 파형 검사만으로 축소됩니다.
 
-### 현재 PC 실측
+### Chatterbox Multilingual V3 실험 엔진
+
+한국어 제로샷 보이스 클로닝을 음색 비교용으로 선택할 수 있습니다. 기본 엔진은 계속 Qwen3-TTS 1.7B입니다. Chatterbox는 별도 가상환경을 사용하며, V3를 포함하는 공식 Git 커밋을 설치해야 합니다. PyPI의 `chatterbox-tts 0.1.7` 단독 설치에는 V3 선택 코드가 없습니다.
+
+```powershell
+.\.venv\Scripts\python.exe -m venv .runtime\engines\chatterbox-v3\venv
+.\.runtime\engines\chatterbox-v3\venv\Scripts\python.exe -m pip install --upgrade pip
+.\.runtime\engines\chatterbox-v3\venv\Scripts\python.exe -m pip install torch==2.6.0+cu126 torchaudio==2.6.0+cu126 --extra-index-url https://download.pytorch.org/whl/cu126
+.\.runtime\engines\chatterbox-v3\venv\Scripts\python.exe -m pip install git+https://github.com/resemble-ai/chatterbox.git@5de7a54aa4e5e2baadb0182dde554908b48b85c2
+.\.venv\Scripts\python.exe tools\register_chatterbox_v3.py
+```
+
+첫 합성 시 선택된 V3 가중치 약 3GB를 `.runtime/cache/huggingface`에 받습니다. Studio에서 `Chatterbox Multilingual V3 · 실험용 음색 비교`를 선택해 Qwen 결과와 들어 비교하세요. 동일 한국어 샘플의 로컬 Whisper 문자 오류율은 Qwen보다 높았으므로 기본 모델로 승격하지 않았습니다.
+
+### VoxCPM2 실험 엔진
+
+```powershell
+.\install-voxcpm2.cmd
+```
+
+전용 `.runtime/engines/voxcpm2/venv`에 VoxCPM 2.0.3과 PyTorch 2.6.0/CUDA 12.6을 설치하고, 고정된 모델 리비전을 약 5GB 다운로드한 뒤 엔진을 등록합니다. Studio와 벤치마크에서 `VoxCPM2 2B · 실험용 음성 복제`를 선택하세요. 기본 모델과 외부 API는 기존 Qwen 설정을 유지합니다.
+
+참조 WAV와 정확한 대본을 함께 사용하는 복제 방식입니다. 공식 기본값인 CFG 2.0, 추론 10단계와 BF16/SDPA를 사용하며 48kHz PCM WAV를 출력합니다. Windows 기본 경로에서는 `torch.compile`을 끕니다. 참조 음성 정제나 텍스트 정규화는 추가로 적용하지 않습니다.
+
+Qwen과 같은 로컬 작업 포트(8790)를 공유하므로 두 모델 사이를 전환할 때 이전 모델을 종료합니다. 같은 모델의 다음 작업은 이미 로딩한 프로세스를 재사용합니다. 최초 작업의 전체 시간에는 로딩 비용이 포함되며, 결과 manifest의 `adapter.worker`에는 모델 로딩 시간, 합성 시간, RTF, 최대 GPU 할당 메모리를 별도로 기록합니다. 합성 시간은 참조 음성 인코딩을 포함합니다.
+
+VoxCPM2는 실험용으로 파형 검사만 적용합니다. 모델 내부 자동 재시도와 Qwen 전용 Whisper 자동 재생성은 적용하지 않아 요청한 Seed를 유지합니다. 장문은 기존 VoiceBench 분할·결합 경로를 사용하지만, 긴 대본의 음색 연속성은 별도 평가가 필요합니다. 다운로드 이후 합성은 오프라인으로 실행됩니다.
+
+사용자 청취 결과에 따라 쇼츠 감정 프리셋 두 개는 비활성화했습니다. VoxCPM2는 감정·속도·강조 지시를 추가하지 않는 기본 복제 설정만 선택할 수 있습니다. 재설치해도 감정 프리셋을 다시 활성화하지 않으며, 이전 비교 결과와 음성 파일은 보존합니다.
+
+### 이전 GTX 1070 Ti 실측
 
 GTX 1070 Ti 8GB에서 공식 레퍼런스와 짧은 한국어 문장으로 전체 작업 큐를 검증했습니다.
 
@@ -124,7 +154,26 @@ GTX 1070 Ti 8GB에서 공식 레퍼런스와 짧은 한국어 문장으로 전�
 - GPU 사용률 피크: 100%
 - 클리핑: 0%, 자동 hard reject 통과
 
-## 데이터 구조
+## Fish S2-Pro / ZONOS2 비교 엔진
+
+Windows에서 `powershell -ExecutionPolicy Bypass -File .\install-fish-zonos.ps1`로
+두 선택형 엔진을 설치합니다. 한 모델만 설치할 때는 `-Engine fish-speech` 또는
+`-Engine zonos2`를 사용합니다. 기존 서버는 설치 후 재시작하면 Studio 목록이 갱신됩니다.
+실행 중인 작업이 없는지 먼저 확인하세요.
+
+- Fish: 원본 BF16 가중치, 4096토큰 캐시, 모델/코덱 순차 GPU 사용, 감정 태그 없음.
+- ZONOS2: 공식 Q8_0 GGUF와 로컬 CUDA 빌드, 정확한 화자 복제 모드, 감정 제어 꺼짐.
+- VoxCPM2: 기존 10단계와 추가 20단계 비교 프리셋. 단계 증가가 청감 개선을 보장하지 않습니다.
+- 모두 같은 8790 작업자 포트를 사용해 모델을 교체하며 GPU 작업은 직렬 실행합니다.
+- 운영 Qwen 기본값과 외부 API의 고정 엔진/Seed는 유지합니다.
+
+Built with Fish Audio. Fish S2-Pro는 연구·비상업 평가용입니다.
+상업적 사용은 [Fish Audio의 별도 라이선스](https://github.com/fishaudio/fish-speech/blob/main/LICENSE)가 필요합니다.
+설정 및 검증 범위는 [네 모델 비교 기록](docs/four-model-comparison.md)을 참고하세요.
+ZONOS2 설치는 VoiceBench 내부에 MSVC/SDK/CUDA 도구를 준비하고 CUDA 서버를 빌드하므로
+시간이 걸립니다. 기본 CUDA 아키텍처는 이 PC의 RTX 4070 Ti SUPER에 맞춘 SM89입니다.
+
+## 데이터 저장
 
 ```text
 data/
