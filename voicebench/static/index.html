@@ -44,10 +44,15 @@
             <label for="studio-text" class="sr-only">합성할 대본</label>
             <textarea id="studio-text" placeholder="예: 안녕하세요. 오늘은 새로운 이야기를 들려드리겠습니다." required></textarea>
             <div class="composer-footer">
-              <div class="composer-meta"><span id="studio-char-count">0자</span><span id="studio-segment-estimate">예상 0조각</span></div>
+              <div class="composer-meta"><span id="studio-char-count">0자</span><span id="studio-segment-estimate" aria-live="polite">0구간</span></div>
               <div class="composer-actions"><label>엔진 <select id="studio-engine"></select></label><label>Seed <input id="studio-seed" type="number" value="13" min="0" max="2147483647"></label><button id="studio-generate" class="primary" type="submit">음성 만들기</button></div>
             </div>
           </form>
+          <details id="studio-plan-preview" class="hidden">
+            <summary>실제 생성 구간 보기</summary>
+            <p class="support">대본의 길이와 문장·문단 경계에 따라 나눕니다. 출력 시간은 말하는 속도에 따라 달라집니다.</p>
+            <ol id="studio-plan-segments"></ol>
+          </details>
           <p class="studio-note"><span></span>장문 HQ 모드: 문단과 의미 전환에 맞춰 호흡을 구성하고, CPU 음성인식으로 명확한 실패만 자동 재생성합니다.</p>
         </article>
 

@@ -174,6 +174,11 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
                     self.server.service.create_project(payload.get("name", ""), payload.get("description", "")),
                     status=HTTPStatus.CREATED,
                 )
+            if path == "/api/studio/preview":
+                payload = self.read_json()
+                return self.send_json(
+                    self.server.service.preview_studio_script(payload.get("text", ""))
+                )
             if path == "/api/studio/synthesize":
                 payload = self.read_json()
                 return self.send_json(

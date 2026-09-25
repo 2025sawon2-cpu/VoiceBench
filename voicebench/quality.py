@@ -8,6 +8,7 @@ import subprocess
 import threading
 import time
 import unicodedata
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -44,14 +45,15 @@ def character_error_rate(expected: str, actual: str) -> float:
     return previous[-1] / len(expected)
 
 
-def _has_adjacent_repetition(text: str) -> bool:
+def _adjacent_repetitions(text: str) -> Counter[str]:
     compact = normalize_for_quality(text)
+    repeated: Counter[str] = Counter()
     for width in range(3, min(16, len(compact) // 2) + 1):
         for start in range(0, len(compact) - width * 2 + 1):
             phrase = compact[start : start + width]
             if compact[start + width : start + width * 2] == phrase:
-                return True
-    return False
+                repeated[phrase] += 1
+    return repeated
 
 
 def evaluate_candidate(
@@ -72,7 +74,10 @@ def evaluate_candidate(
         and expected.startswith(actual)
         and 0 < len(expected) - len(actual) <= 3
     )
-    repeated = _has_adjacent_repetition(transcription or "")
+    # Scripted emphasis ("천천히 천천히") is not a synthesis defect.
+    repeated = bool(
+        _adjacent_repetitions(transcription or "") - _adjacent_repetitions(expected_text)
+    )
     reasons: list[str] = []
 
     if wav_metrics.get("hard_reject"):
@@ -145,7 +150,17 @@ def evaluate_candidate(
 def choose_best_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any]:
     if not candidates:
         raise ValueError("품질 후보가 없습니다.")
-    return min(candidates, key=lambda item: (item["quality"]["score"], item["attempt"]))
+    # A slightly lower CER must never beat a candidate that actually passed.
+    # When all candidates fail, retain the least risky playable result.
+    return min(
+        candidates,
+        key=lambda item: (
+            bool(item["quality"].get("wav", {}).get("hard_reject")),
+            bool(item["quality"].get("retry_recommended")),
+            item["quality"]["score"],
+            item["attempt"],
+        ),
+    )
 
 
 @dataclass

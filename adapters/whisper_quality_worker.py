@@ -11,6 +11,30 @@ def emit(payload: dict) -> None:
     sys.stdout.flush()
 
 
+def transcribe_audio(processor, model, audio, language: str) -> str:
+    """Keep the entire recording; Whisper otherwise truncates at 30 seconds."""
+    long_form = len(audio) > 30 * 16000
+    inputs = processor(
+        audio,
+        sampling_rate=16000,
+        return_tensors="pt",
+        return_attention_mask=True,
+        truncation=False,
+        padding="longest" if long_form else "max_length",
+    )
+    generated = model.generate(
+        inputs.input_features,
+        attention_mask=inputs.attention_mask,
+        language=language,
+        task="transcribe",
+        max_new_tokens=256,
+        return_timestamps=long_form,
+        condition_on_prev_tokens=False,
+        do_sample=False,
+    )
+    return processor.batch_decode(generated, skip_special_tokens=True)[0].strip()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Persistent local Whisper quality worker")
     parser.add_argument("--model", required=True)
@@ -40,23 +64,10 @@ def main() -> int:
                 audio = audio.mean(axis=1)
             if sample_rate != 16000:
                 audio = resample_poly(audio, 16000, sample_rate)
-            inputs = processor(
-                audio,
-                sampling_rate=16000,
-                return_tensors="pt",
-                return_attention_mask=True,
-            )
             with torch.inference_mode():
-                generated = model.generate(
-                    inputs.input_features,
-                    attention_mask=inputs.attention_mask,
-                    language=payload.get("language", "ko"),
-                    task="transcribe",
-                    max_new_tokens=256,
+                transcription = transcribe_audio(
+                    processor, model, audio, payload.get("language", "ko")
                 )
-            transcription = processor.batch_decode(
-                generated, skip_special_tokens=True
-            )[0].strip()
             emit({"status": "ok", "transcription": transcription})
         except Exception as error:
             emit({"status": "error", "error": f"{type(error).__name__}: {error}"})

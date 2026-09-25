@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import random
 import threading
+from dataclasses import replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -20,11 +22,44 @@ LANGUAGES = {
 }
 
 
+def continuation_prompt(model, anchor_prompt, audio: str, text: str, mode: str = "replace"):
+    """Experimental acoustic context with the owner's original speaker embedding.
+
+    The caller must verify the complete previous audio/transcript pair. No text
+    overlap or approximate waveform cropping is involved. Never mutate the
+    cached anchor or carry a newly estimated speaker identity into the next turn.
+    """
+    if len(anchor_prompt) != 1 or not text.strip():
+        raise ValueError("A single anchor and a complete continuation transcript are required")
+    if mode not in {"replace", "anchored"}:
+        raise ValueError("Unsupported continuation mode")
+    previous = model.create_voice_clone_prompt(
+        ref_audio=audio, ref_text=text, x_vector_only_mode=False
+    )
+    anchor = anchor_prompt[0]
+    if mode == "anchored":
+        import torch
+
+        # Retain the real recording's acoustic codes as well as its identity.
+        # Both transcripts describe complete audio sequences in the same order.
+        # Qwen consumes the context; it is not added to the spoken target text.
+        if anchor.ref_code is None or not anchor.ref_text:
+            raise ValueError("Anchored context requires full-reference audio and text")
+        return [replace(
+            previous[0], ref_spk_embedding=anchor.ref_spk_embedding,
+            ref_code=torch.cat([anchor.ref_code, previous[0].ref_code], dim=0),
+            ref_text=f"{anchor.ref_text.rstrip()} {text.strip()}",
+        )]
+    return [replace(previous[0], ref_spk_embedding=anchor.ref_spk_embedding)]
+
+
 class QwenWorkerServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, address: tuple[str, int], model_name: str, dtype_name: str):
         import torch
+        from huggingface_hub import snapshot_download
+        from huggingface_hub.errors import LocalEntryNotFoundError
         from qwen_tts import Qwen3TTSModel
 
         if not torch.cuda.is_available():
@@ -42,14 +77,22 @@ class QwenWorkerServer(ThreadingHTTPServer):
             f"(CC {capability[0]}.{capability[1]}, {dtype_name.upper()}/eager)",
             flush=True,
         )
+        model_source = model_name
+        if not Path(model_name).is_dir():
+            try:
+                # Passing a cached directory also prevents the tokenizer's
+                # unrelated model_info lookup when operating offline.
+                model_source = snapshot_download(model_name, local_files_only=True)
+            except LocalEntryNotFoundError:
+                pass  # Retain the existing first-run download behavior.
         self.model = Qwen3TTSModel.from_pretrained(
-            model_name,
+            model_source,
             device_map="cuda:0",
             dtype=dtype,
             attn_implementation="eager",
             low_cpu_mem_usage=True,
         )
-        self.prompt_cache: dict[tuple[str, str], Any] = {}
+        self.prompt_cache: dict[tuple[str, str, str], Any] = {}
         self.generation_lock = threading.Lock()
         super().__init__(address, QwenWorkerHandler)
 
@@ -74,18 +117,21 @@ class QwenWorkerServer(ThreadingHTTPServer):
             "subtalker_top_k",
             "subtalker_top_p",
             "subtalker_temperature",
+            "non_streaming_mode",
         }
         if not isinstance(generation, dict) or set(generation) - allowed_generation:
             raise ValueError("Unsupported generation parameters")
+        if "non_streaming_mode" in generation and not isinstance(generation["non_streaming_mode"], bool):
+            raise ValueError("non_streaming_mode must be a boolean")
         if not text or not reference or not reference_text:
             raise ValueError("text, reference, and reference_text are required")
 
         with self.generation_lock:
-            random.seed(seed)
-            np.random.seed(seed)
-            self.torch.manual_seed(seed)
-            self.torch.cuda.manual_seed_all(seed)
-            cache_key = (str(Path(reference).resolve()), reference_text)
+            reference_path = Path(reference).resolve()
+            cache_key = (
+                str(reference_path), reference_text,
+                hashlib.sha256(reference_path.read_bytes()).hexdigest(),
+            )
             prompt = self.prompt_cache.get(cache_key)
             if prompt is None:
                 prompt = self.model.create_voice_clone_prompt(
@@ -93,7 +139,25 @@ class QwenWorkerServer(ThreadingHTTPServer):
                     ref_text=reference_text,
                     x_vector_only_mode=False,
                 )
+                if len(self.prompt_cache) >= 4:
+                    self.prompt_cache.pop(next(iter(self.prompt_cache)))
                 self.prompt_cache[cache_key] = prompt
+            context = payload.get("continuation")
+            if context is not None:
+                # Only the trusted runner and local comparison tools supply
+                # this context. External caller payloads never forward it.
+                info = sf.info(context["audio"])
+                if not 3 <= info.duration <= 20:
+                    raise ValueError("Continuation audio must be a complete 3–20 second segment")
+                prompt = continuation_prompt(
+                    self.model, prompt, context["audio"], context["text"],
+                    mode=context.get("mode", "replace"),
+                )
+            # Prompt cache misses must not change the sampling RNG state.
+            random.seed(seed)
+            np.random.seed(seed)
+            self.torch.manual_seed(seed)
+            self.torch.cuda.manual_seed_all(seed)
             with self.torch.inference_mode():
                 wavs, sample_rate = self.model.generate_voice_clone(
                     text=text,
@@ -108,6 +172,7 @@ class QwenWorkerServer(ThreadingHTTPServer):
             "sample_rate": sample_rate,
             "prompt_cache_entries": len(self.prompt_cache),
             "generation": generation,
+            "continuation_used": context is not None,
         }
 
 

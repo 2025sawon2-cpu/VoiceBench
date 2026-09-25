@@ -22,6 +22,7 @@ class EngineRequest:
     output: Path
     seed: int
     language: str = "ko"
+    continuation: dict[str, Any] | None = None
 
 
 class EngineError(RuntimeError):
@@ -170,6 +171,8 @@ def run_engine(engine: dict[str, Any], request: EngineRequest) -> dict[str, Any]
             "language": request.language,
             "generation": config.get("generation", {}),
         }
+        if request.continuation is not None:
+            payload["continuation"] = request.continuation
         request.output.parent.mkdir(parents=True, exist_ok=True)
         result = _json_request(
             str(config["worker"]["endpoint"]), payload, int(config.get("timeout_seconds", 7200))

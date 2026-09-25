@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
 from voicebench.config import Paths
 from voicebench.db import Database
 from voicebench.service import Service
+from tools.register_continuity import register_continuity_variant
 
 
 def main() -> None:
@@ -210,6 +211,9 @@ def main() -> None:
             }
         )
         print(f"Registered engine {preset['slug']} (id={preset['id']})")
+
+    comparison = register_continuity_variant(paths, database)
+    print(f"Registered comparison engine {comparison['slug']} (id={comparison['id']})")
 
 
 if __name__ == "__main__":

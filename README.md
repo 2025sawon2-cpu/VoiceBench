@@ -142,10 +142,15 @@ data/
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-## 다음 Gate
+## 자연스러움 개선과 비교
 
-1. Qwen3-TTS 0.6B FP16/eager 어댑터와 짧은 smoke test
-2. GPT-SoVITS v2ProPlus 어댑터
-3. CosyVoice3 0.5B 비교
-4. MOSS-TTS v1.5 8B Q4의 8GB VRAM 실행 가능성 검증
-5. Gate 0 전체에서 음질·화자 유사도·OOM·VRAM·RAM·생성 시간을 기록해 최종 엔진 선정
+생산 기본은 Qwen 1.7B 표현형·Seed 13·long-form HQ입니다. 실제 분할 결과가 한 구간이면
+사용자가 스토리·설명형·대화형 비교에서 선호한 A의 전체 대본 입력 방식으로 생성합니다. 여러 구간인 대본은 기존
+장문 생성 방식을 사용합니다. 이는 30초 기준의 분할 규칙이 아닙니다. [품질 점검과 비교 도구 안내](docs/voice-quality.md)에
+확인한 문제, 적용한 수정, 로컬 음성 비교 방법, 다음 개선 우선순위를 정리했습니다.
+
+Studio에서 `Qwen3-TTS 1.7B · 문맥 연결 비교 (실험·HQ)`를 선택하면 원본 목소리 정보를
+유지하면서 검증된 앞 구간의 말투를 참조합니다. 연결 검증에 실패하면 같은 Seed의 원본
+참조로 다시 생성합니다. 기존 설치에는 `.\.venv\Scripts\python.exe tools\register_continuity.py`로
+비교 프리셋을 추가할 수 있습니다. 이 문맥 연결 프리셋은 선택 사항이며 외부 API/MCP의
+기본 엔진은 표현형입니다. 단일 생성 개선과 청취 결과는 [쇼츠 품질 기록](docs/shorts-quality-20260925.md)에 정리했습니다.

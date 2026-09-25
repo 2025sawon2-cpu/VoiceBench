@@ -493,7 +493,12 @@ class HarnessTests(unittest.TestCase):
 
             connection = http.client.HTTPConnection(host, port, timeout=5)
             body = json.dumps(
-                {"text": "External agent test", "seed": "this value must be ignored"}
+                {
+                    "text": "External agent test", "seed": "this value must be ignored",
+                    "engine_slug": "mock-b", "quality_mode": "standard",
+                    "generation": {"non_streaming_mode": True},
+                    "continuation": {"audio": "untrusted.wav", "text": "ignored"},
+                }
             ).encode("utf-8")
             connection.request("POST", "/v1/tts", body=body, headers=bearer_headers)
             response = connection.getresponse()

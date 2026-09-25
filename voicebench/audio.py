@@ -24,6 +24,7 @@ def inspect_wav(path: Path) -> dict[str, Any]:
         "sample_rate": sample_rate,
         "frame_count": frame_count,
         "duration_seconds": round(frame_count / sample_rate, 4) if sample_rate else 0,
+        "hard_reject": frame_count == 0,
     }
     if sample_width == 2 and frames:
         values = struct.unpack(f"<{len(frames) // 2}h", frames)

@@ -9,7 +9,7 @@ from pathlib import Path
 from .audio import concatenate_wavs, inspect_wav
 from .config import Paths
 from .db import Database
-from .engines import EngineRequest, run_engine
+from .engines import EngineError, EngineRequest, run_engine
 from .monitor import GpuSampler
 from .quality import (
     QUALITY_RETRY_SEEDS,
@@ -18,7 +18,12 @@ from .quality import (
     cleanup_candidates,
     promote_candidate,
 )
-from .service import LONG_FORM_QUALITY_MODE, partition_studio_chapters
+from .service import (
+    LONG_FORM_QUALITY_MODE,
+    STUDIO_ENGINE_SLUG,
+    STUDIO_INPUT_POLICY,
+    partition_studio_chapters,
+)
 from .util import json_dumps, sha256_file, system_snapshot, utc_now
 
 
@@ -39,7 +44,10 @@ class JobRunner(threading.Thread):
             row = connection.execute(
                 """SELECT j.*,p.normalized_text,p.original_text,e.slug,e.name,e.kind,e.version,e.config_json,
                           pr.reference_path,pr.reference_sha256,pr.reference_text,
-                          sr.id AS studio_request_id,sr.quality_mode AS studio_quality_mode
+                          sr.id AS studio_request_id,sr.quality_mode AS studio_quality_mode,
+                          (SELECT COUNT(*) FROM studio_segments total
+                           WHERE total.request_id=sr.id) AS request_segment_count,
+                          ss.position AS segment_position,ss.paragraph_index,ss.semantic_role
                    FROM jobs j JOIN prompts p ON p.id=j.prompt_id
                    JOIN engines e ON e.id=j.engine_id JOIN projects pr ON pr.id=j.project_id
                    LEFT JOIN studio_segments ss ON ss.job_id=j.id
@@ -88,6 +96,92 @@ class JobRunner(threading.Thread):
         row = self.db.fetch_one("SELECT status FROM studio_requests WHERE id=?", (request_id,))
         return bool(row and row["status"] == "cancelled")
 
+    def _synthesis_engine(self, job: dict) -> tuple[dict, dict]:
+        """Apply the selected shorts input mode to one complete HQ generation.
+
+        Count the entire request, not its remaining jobs. Explicit comparison
+        settings and multi-segment requests retain their registered generation.
+        Work on a copy so the preset and continuity compatibility stay intact.
+        """
+        config = json.loads(job["config_json"] or "{}")
+        generation = config.get("generation", {})
+        apply_full_text = bool(
+            self._quality_control_enabled(job)
+            and job.get("slug") == STUDIO_ENGINE_SLUG
+            and job.get("request_segment_count") == 1
+            and config.get("worker")
+            and "non_streaming_mode" not in generation
+        )
+        if apply_full_text:
+            generation = {**generation, "non_streaming_mode": True}
+            config["generation"] = generation
+        synthesis = {
+            "input_policy": STUDIO_INPUT_POLICY if apply_full_text else "engine_config",
+            "request_segment_count": job.get("request_segment_count"),
+            "generation": generation,
+        }
+        return {**job, "config_json": json_dumps(config)}, synthesis
+
+    def _continuity_context(self, job: dict) -> tuple[dict | None, str]:
+        """Use one verified hop within this request; never accumulate synthetic context."""
+        config = json.loads(job["config_json"] or "{}")
+        if config.get("continuity_mode") != "anchored":
+            return None, "disabled"
+        if not self._quality_control_enabled(job) or not config.get("worker"):
+            return None, "requires_hq_worker"
+        if job.get("semantic_role") in {"transition", "conclusion"}:
+            return None, "semantic_boundary"
+        previous = self.db.fetch_one(
+            """SELECT ss.text,ss.paragraph_index,ss.paragraph_end,j.id AS job_id,
+                      j.status,j.engine_id,r.output_path,r.output_sha256,r.duration_seconds,
+                      r.metrics_json,r.manifest_json
+               FROM studio_segments ss JOIN jobs j ON j.id=ss.job_id
+               LEFT JOIN runs r ON r.job_id=j.id
+               WHERE ss.request_id=? AND ss.position=?""",
+            (job["studio_request_id"], int(job.get("segment_position") or 1) - 1),
+        )
+        if not previous or previous["status"] != "succeeded":
+            return None, "no_verified_previous_segment"
+        if previous["paragraph_end"] or previous["paragraph_index"] != job["paragraph_index"]:
+            return None, "paragraph_boundary"
+        metrics = json.loads(previous["metrics_json"] or "{}")
+        quality = metrics.get("quality_control", {})
+        if quality.get("status") not in {"passed", "regenerated_pass"}:
+            return None, "previous_quality_unverified"
+        selected_quality = next((
+            attempt for attempt in quality.get("attempts", [])
+            if attempt.get("attempt") == quality.get("selected_attempt")
+        ), {})
+        if (
+            selected_quality.get("transcription") is None
+            or selected_quality.get("retry_recommended", True)
+            or selected_quality.get("wav", {}).get("hard_reject", True)
+        ):
+            return None, "previous_quality_unverified"
+        if metrics.get("continuity", {}).get("used"):
+            return None, "one_hop_reset"
+        if not 3.0 <= float(previous["duration_seconds"] or 0) <= 20.0:
+            return None, "context_duration_out_of_range"
+        manifest = json.loads(previous["manifest_json"] or "{}")
+        if (
+            previous["engine_id"] != job["engine_id"]
+            or manifest.get("engine", {}).get("config") != config
+            or manifest.get("reference_sha256") != job["reference_sha256"]
+            or manifest.get("reference_text") != job.get("reference_text", "")
+            or manifest.get("normalized_text") != previous["text"]
+        ):
+            return None, "context_settings_changed"
+        path = Path(previous["output_path"])
+        try:
+            if sha256_file(path) != previous["output_sha256"]:
+                return None, "context_audio_changed"
+        except OSError:
+            return None, "context_audio_missing"
+        return {
+            "audio": str(path), "text": previous["text"], "mode": "anchored",
+            "previous_job_id": previous["job_id"],
+        }, ""
+
     def execute_job(self, job: dict) -> None:
         output_dir = self.paths.outputs / f"project-{job['project_id']}" / f"prompt-{job['prompt_id']}"
         output_path = output_dir / f"job-{job['id']}-{job['slug']}-seed-{job['seed']}.wav"
@@ -102,10 +196,17 @@ class JobRunner(threading.Thread):
             retry_seeds = [
                 seed for seed in QUALITY_RETRY_SEEDS if seed != int(job["seed"])
             ]
-            attempt_seeds = [int(job["seed"]), *retry_seeds]
+            context, reset_reason = self._continuity_context(job)
+            synthesis_engine, synthesis = self._synthesis_engine(job)
+            # A failed context attempt returns to the original reference at the SAME
+            # seed before the existing fallback seeds. Production defaults are unchanged.
+            attempt_plan = [(int(job["seed"]), context)]
+            if context:
+                attempt_plan.append((int(job["seed"]), None))
+            attempt_plan.extend((seed, None) for seed in retry_seeds)
             candidates: list[dict] = []
             candidate_paths: list[Path] = []
-            for attempt, seed in enumerate(attempt_seeds, start=1):
+            for attempt, (seed, attempt_context) in enumerate(attempt_plan, start=1):
                 candidate_path = (
                     output_path
                     if attempt == 1
@@ -114,17 +215,34 @@ class JobRunner(threading.Thread):
                     )
                 )
                 candidate_paths.append(candidate_path)
-                adapter = run_engine(
-                    job,
-                    EngineRequest(
-                        text=job["normalized_text"],
-                        reference=Path(job["reference_path"]),
-                        reference_text=job.get("reference_text", ""),
-                        output=candidate_path,
-                        seed=seed,
-                    ),
-                )
-                if quality_enabled:
+                generation_error = None
+                try:
+                    adapter = run_engine(
+                        synthesis_engine,
+                        EngineRequest(
+                            text=job["normalized_text"],
+                            reference=Path(job["reference_path"]),
+                            reference_text=job.get("reference_text", ""),
+                            output=candidate_path,
+                            seed=seed,
+                            continuation=(
+                                {key: attempt_context[key] for key in ("audio", "text", "mode")}
+                                if attempt_context else None
+                            ),
+                        ),
+                    )
+                except EngineError as error:
+                    if not attempt_context:
+                        raise
+                    generation_error = str(error)
+                    adapter = {"adapter": "context-generation-failed"}
+                if generation_error is not None:
+                    quality = {
+                        "verifier": "generation-error", "retry_recommended": True,
+                        "reasons": ["context_generation_failed"], "score": 10.0,
+                        "wav": {"hard_reject": True}, "error": generation_error[-2000:],
+                    }
+                elif quality_enabled:
                     quality = self.quality_verifier.inspect(
                         job["normalized_text"], candidate_path
                     )
@@ -144,14 +262,30 @@ class JobRunner(threading.Thread):
                         "path": candidate_path,
                         "adapter": adapter,
                         "quality": quality,
+                        "continuity_used": bool(attempt_context),
                     }
                 )
-                if not quality_enabled or not quality["retry_recommended"]:
+                context_verified = (
+                    quality.get("transcription") is not None
+                    and not quality.get("retry_recommended")
+                    and not quality["wav"].get("hard_reject")
+                )
+                candidates[-1]["context_verified"] = context_verified
+                if not quality_enabled or (
+                    not quality["retry_recommended"] and (not attempt_context or context_verified)
+                ):
                     break
                 if self._request_cancelled(job):
                     break
 
-            selected = choose_best_candidate(candidates)
+            # Unverified context must not win on a lower ASR score if all retries fail.
+            safe_candidates = [
+                item for item in candidates
+                if not item["continuity_used"] or item["context_verified"]
+            ]
+            if not safe_candidates:
+                raise RuntimeError("문맥 연결 검증이 중단되었습니다.")
+            selected = choose_best_candidate(safe_candidates)
             selected_seed = int(selected["seed"])
             selected_output_path = output_dir / (
                 f"job-{job['id']}-{job['slug']}-seed-{selected_seed}.wav"
@@ -167,12 +301,14 @@ class JobRunner(threading.Thread):
             metrics = inspect_wav(output_path)
             metrics["wall_seconds"] = round(time.perf_counter() - started, 4)
             metrics["gpu"] = sampler.summary()
+            metrics["synthesis"] = synthesis
             quality_attempts = []
             for candidate in candidates:
                 quality_attempts.append(
                     {
                         "attempt": candidate["attempt"],
                         "seed": candidate["seed"],
+                        "continuity_used": candidate["continuity_used"],
                         **candidate["quality"],
                     }
                 )
@@ -191,10 +327,22 @@ class JobRunner(threading.Thread):
                 "status": quality_status,
                 "base_seed": int(job["seed"]),
                 "selected_seed": selected_seed,
+                "selected_attempt": selected["attempt"],
                 "regenerated": len(candidates) > 1,
                 "fallback_selected": selected_seed != int(job["seed"]),
                 "attempt_count": len(candidates),
                 "attempts": quality_attempts,
+            }
+            metrics["continuity"] = {
+                "requested": json.loads(job["config_json"] or "{}").get("continuity_mode") == "anchored",
+                "used": selected["continuity_used"],
+                "mode": "anchored" if selected["continuity_used"] else None,
+                "previous_job_id": context["previous_job_id"] if context else None,
+                "reset_reason": (
+                    "context_failed_verification" if context and not selected["continuity_used"]
+                    else reset_reason
+                ),
+                "fallback_to_reference": bool(context and not selected["continuity_used"]),
             }
             digest = sha256_file(output_path)
             code = digest[:10].upper()
@@ -209,6 +357,8 @@ class JobRunner(threading.Thread):
                 "seed": job["seed"],
                 "selected_seed": selected_seed,
                 "quality_control": metrics["quality_control"],
+                "continuity": metrics["continuity"],
+                "synthesis": synthesis,
                 "reference_sha256": job["reference_sha256"],
                 "reference_text": job.get("reference_text", ""),
                 "original_text": job["original_text"],
