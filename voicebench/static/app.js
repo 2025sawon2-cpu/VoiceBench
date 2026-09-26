@@ -113,8 +113,13 @@ function renderStudio() {
         + Number(roleCounts.conclusion || 0)
         + Number(roleCounts.exclamation || 0);
       const planSummary = speechPlan.paragraph_count
-        ? ` · 낭독계획 ${speechPlan.paragraph_count}문단/${speechPlan.segment_count}호흡`
-          + (expressiveUnits ? ` · 강조단위 ${expressiveUnits}` : '')
+        ? ` · ${speechPlan.paragraph_count}문단/${speechPlan.segment_count}생성 구간`
+          + (expressiveUnits ? ` · 질문·전환 등 ${expressiveUnits}구간` : '')
+        : '';
+      const continuity = item.continuity || {};
+      const continuityLabel = continuity.requested_segments
+        ? ` · 문맥 연결 적용 ${continuity.used_segments || 0}구간`
+          + (continuity.fallback_segments ? ` · 원본 참조로 재시도 ${continuity.fallback_segments}구간` : '')
         : '';
       const audio = item.status === 'succeeded'
         ? `<audio controls preload="none" src="${item.audio_url}"></audio><a class="download-button" href="${item.audio_url}" download="my-voice-${item.id}.wav">WAV 저장</a>`
@@ -132,7 +137,7 @@ function renderStudio() {
             return `<div class="chapter-item"><span><b>${chapter.position}장</b><small>${chapter.character_count.toLocaleString()}자</small></span><div>${chapterAudio}</div></div>`;
           }).join('')}</details>`
         : '';
-      return `<div class="studio-result ${item.id === studio.processing_request_id ? 'is-processing' : ''}"><div class="studio-result-main"><span class="studio-result-index">#${item.id}</span><div class="studio-result-copy"><strong>${escapeHtml(item.original_text)}</strong><small><b class="source-badge">${source}</b> · 엔진 ${engine} · ${date} · ${seedLabel} · ${progress}${planSummary}${qualityLabel}${queue}${item.duration_seconds ? ` · ${Number(item.duration_seconds).toFixed(1)}초` : ''}</small>${chapters}</div></div><div class="studio-result-actions">${audio}${cancel}</div></div>`;
+      return `<div class="studio-result ${item.id === studio.processing_request_id ? 'is-processing' : ''}"><div class="studio-result-main"><span class="studio-result-index">#${item.id}</span><div class="studio-result-copy"><strong>${escapeHtml(item.original_text)}</strong><small><b class="source-badge">${source}</b> · 엔진 ${escapeHtml(engine)} · ${date} · ${seedLabel} · ${progress}${planSummary}${qualityLabel}${continuityLabel}${queue}${item.duration_seconds ? ` · ${Number(item.duration_seconds).toFixed(1)}초` : ''}</small>${chapters}</div></div><div class="studio-result-actions">${audio}${cancel}</div></div>`;
     }).join('');
     $$('.studio-cancel').forEach(button => button.onclick = async () => {
       const id = Number(button.dataset.requestId);
@@ -269,16 +274,42 @@ function escapeHtml(value) {
 }
 
 $$('.nav-item').forEach(node => node.onclick = () => switchView(node.dataset.view));
+let studioPreviewTimer;
+let studioPreviewController;
+let studioPreviewVersion = 0;
 $('#studio-engine').onchange = renderStudioEngineState;
 $('#studio-text').oninput = event => {
   const text = event.target.value;
   const length = text.length;
   $('#studio-char-count').textContent = `${length.toLocaleString()}자`;
-  const sentences = text.trim()
-    ? text.trim().split(/(?<=[.!?。！？])\s+|\n\s*\n+/).filter(Boolean)
-    : [];
-  const estimated = sentences.reduce((count, sentence) => count + Math.max(1, Math.ceil(sentence.length / 180)), 0);
-  $('#studio-segment-estimate').textContent = `예상 ${estimated}조각`;
+  clearTimeout(studioPreviewTimer);
+  studioPreviewController?.abort();
+  const version = ++studioPreviewVersion;
+  $('#studio-plan-preview').classList.add('hidden');
+  $('#studio-plan-segments').replaceChildren();
+  $('#studio-segment-estimate').textContent = text.trim() ? '생성 구간 확인 중…' : '0구간';
+  if (!text.trim()) return;
+  studioPreviewTimer = setTimeout(async () => {
+    studioPreviewController = new AbortController();
+    try {
+      const plan = await api('/api/studio/preview', {...jsonOptions({text}), signal: studioPreviewController.signal});
+      if (version !== studioPreviewVersion) return;
+      $('#studio-segment-estimate').textContent = plan.segment_count === 1
+        ? '한 번에 생성 · 구간 연결 없음'
+        : `${plan.segment_count}구간 생성 · ${plan.join_count}곳 연결`;
+      const items = plan.segments.map(segment => {
+        const item = document.createElement('li');
+        item.textContent = segment.text;
+        return item;
+      });
+      $('#studio-plan-segments').replaceChildren(...items);
+      $('#studio-plan-preview').classList.remove('hidden');
+    } catch (error) {
+      if (error.name !== 'AbortError' && version === studioPreviewVersion) {
+        $('#studio-segment-estimate').textContent = '생성 구간 확인 불가';
+      }
+    }
+  }, 300);
 };
 $('#studio-form').onsubmit = async event => {
   event.preventDefault();

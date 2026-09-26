@@ -6,7 +6,7 @@ import json
 import random
 import re
 import shutil
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -41,6 +41,7 @@ DEFAULT_CORPUS = [
 
 STUDIO_DESCRIPTION = "VoiceBench personal TTS studio"
 STUDIO_ENGINE_SLUG = "qwen3-tts-17b-pascal-expressive"
+STUDIO_INPUT_POLICY = "single_segment_full_text_v1"
 STUDIO_DEFAULT_SEED = 13
 LONG_FORM_QUALITY_MODE = "long_form_hq"
 LONG_FORM_CHAPTER_TARGET_CHARS = 1800
@@ -51,9 +52,8 @@ STUDIO_SEGMENT_HARD_MAX_CHARS = 240
 STUDIO_SEGMENT_MIN_CHARS = 60
 
 _TRANSITION_OPENERS = re.compile(
-    r"^(?:자[,，]?\s*|하지만\s+|그러나\s+|그렇지만\s+|그렇다면\s+|"
-    r"이제\s+|먼저\s+|다음으로\s+|한편\s+|반대로\s+|"
-    r"결국\s+|따라서\s+|그러므로\s+|마지막으로\s+|결론적으로\s+)"
+    r"^(?:자|하지만|그러나|그렇지만|그렇다면|이제|먼저|다음으로|한편|반대로|"
+    r"결국|따라서|그러므로|마지막으로|결론적으로)(?:[,，]\s*|\s+|$)"
 )
 _CONCLUSION_OPENERS = re.compile(r"^(?:결국|따라서|그러므로|마지막으로|결론적으로)\b")
 _SENTENCE_PATTERN = re.compile(
@@ -80,6 +80,12 @@ def _split_long_sentence(text: str, target: int, hard_maximum: int) -> list[str]
             match.end()
             for match in re.finditer(r"[,，;；:：]", remaining[: hard_maximum + 1])
             if match.end() >= minimum
+            # Keep numbers and times such as 12,345 and 03:45 intact.
+            and not (
+                match.start() > 0
+                and remaining[match.start() - 1].isdigit()
+                and remaining[match.end() : match.end() + 1].isdigit()
+            )
         ]
         if candidates:
             boundary = min(candidates, key=lambda value: (abs(value - target), -value))
@@ -160,7 +166,11 @@ def plan_script(
                 units.append(
                     {
                         "text": piece,
-                        "role": role if piece_index == 0 else "statement",
+                        # A long question's rising ending belongs to its last
+                        # piece, not the first piece ending at a comma.
+                        "role": _sentence_role(piece, opening=role == "opening")
+                        if piece_index == 0
+                        else _sentence_role(piece),
                         "sentence_count": 1 if piece_index == 0 else 0,
                     }
                 )
@@ -200,6 +210,10 @@ def plan_script(
         if (
             not preserve_sentences
             and len(groups) > 1
+            # Do not undo a deliberate question/transition breath just to
+            # fill a short tail. These cuts carry meaning, not only length.
+            and groups[-1][0]["role"] not in {"transition", "conclusion"}
+            and groups[-2][-1]["role"] not in {"question", "exclamation"}
             and len(" ".join(str(item["text"]) for item in groups[-1]))
             < min(STUDIO_SEGMENT_MIN_CHARS, maximum // 2)
         ):
@@ -593,6 +607,21 @@ class Service:
         )
         return self.get_project(project["id"])
 
+    def preview_studio_script(self, text: str) -> dict[str, Any]:
+        """Use the synthesis planner without creating projects, prompts or jobs."""
+        if not isinstance(text, str):
+            raise ValueError("대본은 문자열이어야 합니다.")
+        segments = plan_script(text)
+        return {
+            "segment_count": len(segments),
+            "join_count": max(0, len(segments) - 1),
+            "paragraph_count": max((s.paragraph_index for s in segments), default=0),
+            "segments": [
+                {"position": index, **asdict(segment)}
+                for index, segment in enumerate(segments, start=1)
+            ],
+        }
+
     def create_studio_request(
         self,
         text: str,
@@ -667,7 +696,8 @@ class Service:
         if not engine:
             raise ValueError(f"사용 가능한 TTS 엔진이 없습니다: {STUDIO_ENGINE_SLUG}")
         fingerprint_data = {
-            "version": 4,
+            "version": 6,
+            "input_policy": STUDIO_INPUT_POLICY,
             "text": normalized,
             "seed": STUDIO_DEFAULT_SEED,
             "quality_mode": LONG_FORM_QUALITY_MODE,
@@ -753,6 +783,7 @@ class Service:
             "finished_at": request.get("finished_at"),
             "quality_mode": request.get("quality_mode"),
             "quality_control": request.get("quality_control"),
+            "continuity": request.get("continuity"),
             "speech_plan": request.get("speech_plan"),
             "chapters": chapters,
             "download_count": int(request.get("download_count") or 0),
@@ -884,6 +915,13 @@ class Service:
             "total_attempts": 0,
             "selected_seed_counts": {},
         }
+        continuity: dict[str, Any] = {
+            "recorded_segments": 0,
+            "requested_segments": 0,
+            "used_segments": 0,
+            "fallback_segments": 0,
+            "reset_reason_counts": {},
+        }
         for segment in segment_rows:
             if not segment.get("metrics_json"):
                 continue
@@ -891,6 +929,16 @@ class Service:
                 metrics = json.loads(segment["metrics_json"])
             except (TypeError, json.JSONDecodeError):
                 continue
+            context = metrics.get("continuity")
+            if isinstance(context, dict):
+                continuity["recorded_segments"] += 1
+                continuity["requested_segments"] += int(bool(context.get("requested")))
+                continuity["used_segments"] += int(bool(context.get("used")))
+                continuity["fallback_segments"] += int(bool(context.get("fallback_to_reference")))
+                if context.get("requested") and context.get("reset_reason"):
+                    reason = context["reset_reason"]
+                    counts = continuity["reset_reason_counts"]
+                    counts[reason] = counts.get(reason, 0) + 1
             quality = metrics.get("quality_control") or {}
             if not quality.get("enabled"):
                 continue
@@ -909,6 +957,7 @@ class Service:
                     quality_control["selected_seed_counts"].get(key, 0) + 1
                 )
         request["quality_control"] = quality_control
+        request["continuity"] = continuity
         role_counts: dict[str, int] = {}
         for segment in segment_rows:
             role = str(segment.get("semantic_role") or "statement")
