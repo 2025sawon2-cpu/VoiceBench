@@ -14,7 +14,7 @@ Latest owner feedback: after selecting story A, the owner also said “설명형
 
 - Workspace: `C:\Users\s98se\OneDrive\Pictures\Documents\ChatGPT\인스타_자동화\VoiceBench`
 - Local URL: `http://127.0.0.1:8765`; LAN hosting remains offline.
-- At the September 26 pull, port 8765 was owned by PID 71172 and the model worker on 8790 by PID 68296. The database had no queued/running jobs. These processes predate the merge; pull/review does not itself reload them.
+- After the September 26 push/restart, port 8765 is owned by PID 78012 and the Qwen model worker on 8790 by PID 81432. Both run the merged code. Studio request 23 succeeded with the new single-segment full-text policy; the queue is empty.
 - Runtime credentials remain private; use the authenticated hosting script for LAN operation. `.runtime/hosting-session.json` records this machine's local server.
 - The remote September 26 startup/#76 evidence below comes from another checkout (`C:\Users\alseo\Documents\Voice`, GTX 1070 Ti, original launch PID 30448). Its process IDs, data files and runtime state must not be assumed to exist here.
 - The old ngrok public URL is intentionally offline.
@@ -382,3 +382,10 @@ The 1.7B engines, Seed 13 defaults, LAN/MCP integration, queue/cancellation fixe
 - Reviewed new full-text input policy for single-segment default Qwen HQ, opt-in anchored continuity, script-aware repetition checks, passing-candidate priority, numeric/semantic boundary fixes, complete long-audio ASR and reference-cache hashing. External Seed 13 and caller override restrictions remain intact. No local preset database updates or new synthesis were performed for this pull/review.
 - Validation: Python 64/64, Node UI 5/5, JS syntax and comparison-tool constructor signature checks passed. No fresh GPU or listening evaluation on this PC; the remote input-mode listening evidence used a different machine/eager backend. Its Git-ignored recordings were not transferred by pull.
 - At verification the queue was empty, local Qwen remained FP16/SDPA, and the optional continuity preset was not registered in this database. The live web server (PID71172) and Qwen worker (PID68296) still predate the merge. Both must be restarted before relying on new generation behavior; matching model/attention health alone does not detect an older worker source version. No running process was stopped and no remote push was performed during this review.
+
+## 2026-09-26 push and restart verification
+
+- At the owner's request, pushed merge commit `1d6bd98` to `origin/main`, then restarted the local web server and Qwen worker after checking that no jobs were queued/running. Current listener PIDs are 78012 (8765) and 81432 (8790); `.runtime/hosting-session.json` was refreshed.
+- Preserved loopback binding, existing web access behavior and the existing external Bearer key. Authenticated `/v1/health` returns 200. No credential rotation or LAN/tunnel startup occurred.
+- Fresh Studio request 23 / job 56 / run 53 used the selected personal reference, default Qwen 1.7B FP16/SDPA, HQ and Seed 13. It generated 5.36 seconds of audio; Whisper QA passed on the first attempt with CER 0, no fallback and no clipping. This is a functional smoke test, not a subjective quality comparison.
+- Both run metrics and the new worker response confirm `non_streaming_mode=True`; metrics record `single_segment_full_text_v1` and request segment count 1. Audio is local at `data/artifacts/studio/request-23.wav`. All credentials, generated audio and runtime files remain Git-ignored. The optional continuity preset remains unregistered locally.
