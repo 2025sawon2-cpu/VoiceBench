@@ -4,6 +4,15 @@ VoiceBench는 한 대의 로컬 PC에서 보이스 클로닝 TTS 엔진들을 �
 
 이 프로젝트는 Pinokio 및 Pinokio 번들 런타임을 사용하지 않습니다. 하네스는 시스템에 설치된 Python으로 저장소 내부의 독립 가상환경을 만들고, 실제 TTS 엔진도 엔진별 독립 환경에 연결하는 구조입니다.
 
+## 현재 기본 설정 (2026-09-26)
+
+- ZONOS2 Q8/CUDA · 기존 본인 목소리 B · Seed 13 · HQ · 감정 지시 없음.
+- 240자 이하 대본은 통째로 생성하고, 긴 대본은 문장/문단 경계로 나눕니다.
+- Whisper CPU 검사에서 명확한 누락·반복을 감지하면 Seed 10/42로 재시도합니다. ZONOS2 후보가 모두 실패하거나 ASR을 사용할 수 없으면 실패로 표시합니다. 자연스러움/화자 유사성 검증은 별도 청취가 필요합니다.
+- Qwen은 비교/대체용으로 유지합니다. 공식 AmericanMale은 별도 선택이며 개인 레퍼런스를 덮어쓰지 않습니다.
+- ZONOS2 설치: `powershell -ExecutionPolicy Bypass -File .\install-fish-zonos.ps1 -Engine zonos2`로 설치한 뒤 `python tools/register_fish_zonos.py zonos2`로 등록합니다. Whisper 검사는 기존 Qwen 가상환경과 Whisper Base 캐시를 사용하므로 이를 삭제하지 마세요.
+- 비교 음량 보정: `python tools/match_comparison_volume.py --output-dir data/artifacts/matched <wav1> <wav2>`. 원본은 유지하며 RMS를 맞춘 사본을 만듭니다. LUFS 정규화가 아닙니다.
+
 ## 내 목소리 TTS Studio
 
 선택된 9.95초 레퍼런스를 사용해 사용자가 입력한 대본을 내 목소리로 생성합니다.
@@ -14,7 +23,7 @@ VoiceBench는 한 대의 로컬 PC에서 보이스 클로닝 TTS 엔진들을 �
 
 브라우저의 첫 화면에서 대본을 입력하고 `음성 만들기`를 누릅니다. 별도의 글자 수 제한은 없으며, 긴 대본은 약 180자의 문장 중심 의미 단위로 나누어 생성한 뒤 문장부호와 문단에 맞는 호흡을 넣어 WAV 하나로 자동 결합합니다. 완성된 결과는 화면에서 재생하거나 WAV로 저장할 수 있습니다.
 
-Qwen 모델은 첫 요청에서 한 번만 GPU에 올리고 서버가 실행되는 동안 재사용합니다. 현재 PC 실측으로 첫 조각은 모델 준비를 포함해 약 75초, 같은 요청의 다음 조각은 약 18~25초였습니다. 실행 창을 닫으면 워커가 종료되고 GPU 메모리가 반환됩니다.
+선택한 모델은 워커에 로딩한 뒤 다음 요청에서 재사용합니다. 현재 기본 ZONOS2의 처리 시간은 다른 GPU 작업의 동시 상주에 크게 영향을 받습니다. 측정 결과와 한계는 `docs/zonos-production-20260926.md`를 참고하세요.
 
 Studio 결과는 다음 위치에 저장됩니다.
 
@@ -106,7 +115,7 @@ PowerShell에서 다음 명령을 실행합니다.
 
 ## Qwen3-TTS 설치
 
-PyTorch 2.6.0/CUDA 12.6 격리 환경을 설치하고 Qwen3-TTS 0.6B 및 1.7B 엔진들을 등록합니다. 생산 기본값은 1.7B FP16/SDPA 표현형 프리셋입니다. 0.6B 비교 엔진은 기존 eager attention을 유지하며, compute capability 6.x에서 FP32 안전 경로를 사용합니다. 별도 FlashAttention 2 패키지는 설치하지 않습니다.
+PyTorch 2.6.0/CUDA 12.6 격리 환경을 설치하고 Qwen3-TTS 0.6B 및 1.7B 엔진들을 등록합니다. Qwen 비교용 설정은 1.7B FP16/SDPA 표현형 프리셋입니다. 운영 기본은 ZONOS2입니다. 0.6B 비교 엔진은 기존 eager attention을 유지하며, compute capability 6.x에서 FP32 안전 경로를 사용합니다. 별도 FlashAttention 2 패키지는 설치하지 않습니다.
 
 ```powershell
 .\install-qwen3-tts.cmd -DownloadModel
@@ -116,7 +125,7 @@ PyTorch 2.6.0/CUDA 12.6 격리 환경을 설치하고 Qwen3-TTS 0.6B 및 1.7B �
 
 ### Chatterbox Multilingual V3 실험 엔진
 
-한국어 제로샷 보이스 클로닝을 음색 비교용으로 선택할 수 있습니다. 기본 엔진은 계속 Qwen3-TTS 1.7B입니다. Chatterbox는 별도 가상환경을 사용하며, V3를 포함하는 공식 Git 커밋을 설치해야 합니다. PyPI의 `chatterbox-tts 0.1.7` 단독 설치에는 V3 선택 코드가 없습니다.
+한국어 제로샷 보이스 클로닝을 음색 비교용으로 선택할 수 있습니다. 기본 엔진은 ZONOS2이며 Qwen3-TTS 1.7B도 비교용으로 유지합니다. Chatterbox는 별도 가상환경을 사용하며, V3를 포함하는 공식 Git 커밋을 설치해야 합니다. PyPI의 `chatterbox-tts 0.1.7` 단독 설치에는 V3 선택 코드가 없습니다.
 
 ```powershell
 .\.venv\Scripts\python.exe -m venv .runtime\engines\chatterbox-v3\venv
@@ -165,7 +174,7 @@ Windows에서 `powershell -ExecutionPolicy Bypass -File .\install-fish-zonos.ps1
 - ZONOS2: 공식 Q8_0 GGUF와 로컬 CUDA 빌드, 정확한 화자 복제 모드, 감정 제어 꺼짐.
 - VoxCPM2: 기존 10단계와 추가 20단계 비교 프리셋. 단계 증가가 청감 개선을 보장하지 않습니다.
 - 모두 같은 8790 작업자 포트를 사용해 모델을 교체하며 GPU 작업은 직렬 실행합니다.
-- 운영 Qwen 기본값과 외부 API의 고정 엔진/Seed는 유지합니다.
+- 현재 운영 기본은 ZONOS2이며 외부 API의 엔진/Seed는 서버가 고정합니다.
 
 Built with Fish Audio. Fish S2-Pro는 연구·비상업 평가용입니다.
 상업적 사용은 [Fish Audio의 별도 라이선스](https://github.com/fishaudio/fish-speech/blob/main/LICENSE)가 필요합니다.
@@ -193,7 +202,7 @@ data/
 
 ## 자연스러움 개선과 비교
 
-생산 기본은 Qwen 1.7B 표현형·Seed 13·long-form HQ입니다. 실제 분할 결과가 한 구간이면
+Qwen 1.7B 표현형을 선택해 Seed 13·long-form HQ로 생성할 수 있습니다. 실제 분할 결과가 한 구간이면
 사용자가 스토리·설명형·대화형 비교에서 선호한 A의 전체 대본 입력 방식으로 생성합니다. 여러 구간인 대본은 기존
 장문 생성 방식을 사용합니다. 이는 30초 기준의 분할 규칙이 아닙니다. [품질 점검과 비교 도구 안내](docs/voice-quality.md)에
 확인한 문제, 적용한 수정, 로컬 음성 비교 방법, 다음 개선 우선순위를 정리했습니다.
@@ -203,3 +212,12 @@ Studio에서 `Qwen3-TTS 1.7B · 문맥 연결 비교 (실험·HQ)`를 선택하�
 참조로 다시 생성합니다. 기존 설치에는 `.\.venv\Scripts\python.exe tools\register_continuity.py`로
 비교 프리셋을 추가할 수 있습니다. 이 문맥 연결 프리셋은 선택 사항이며 외부 API/MCP의
 기본 엔진은 표현형입니다. 단일 생성 개선과 청취 결과는 [쇼츠 품질 기록](docs/shorts-quality-20260925.md)에 정리했습니다.
+
+## Standalone Studio (2026-09-26)
+
+독립 실행은 `Start-Studio.cmd`를 더블클릭합니다. 음성 만들기, 목소리 보관함, 생성 기록, 비교 실험, 모델 관리, 자동화 연결을 하나의 로컬 UI에서 사용합니다. 자세한 설명은 [독립형 Studio 안내](docs/standalone-studio.md)를 참고하세요.
+
+
+### 목소리 갤러리와 즉시 미리듣기
+
+음성 만들기의 목소리 카드에서 남성/여성, 모델, 분위기 검색과 즐겨찾기를 사용합니다. 카드를 선택하면 대본 없이 저장 샘플을 즉시 재생합니다. ZONOS2 공식 참조 3개, Qwen CustomVoice 내장 화자 9명, 다른 복제 엔진의 공용 남녀 목소리를 구분합니다. 추론 수치와 낭독 지시는 고급 설정에서 조정하며 요청별로 저장합니다. [세부 사용법](docs/standalone-studio.md) · [VoiceStudio 소스 검토 기록](docs/voicestudio-benchmark-20260927.md).

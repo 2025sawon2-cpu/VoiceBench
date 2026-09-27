@@ -11,13 +11,13 @@ if str(ROOT) not in sys.path:
 
 from voicebench.config import Paths
 from voicebench.db import Database
-from voicebench.service import STUDIO_ENGINE_SLUG, Service
+from voicebench.service import QWEN_EXPRESSIVE_SLUG, Service
 
 CONTINUITY_ENGINE_SLUG = "qwen3-tts-17b-pascal-expressive-continuity"
 
 
 def register_continuity_variant(paths: Paths, database: Database) -> dict:
-    source = database.fetch_one("SELECT * FROM engines WHERE slug=?", (STUDIO_ENGINE_SLUG,))
+    source = database.fetch_one("SELECT * FROM engines WHERE slug=?", (QWEN_EXPRESSIVE_SLUG,))
     if not source or source["kind"] != "command":
         raise ValueError("Register the Qwen expressive engine first")
     config = json.loads(source["config_json"])

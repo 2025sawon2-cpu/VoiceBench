@@ -144,6 +144,9 @@ class Database:
             studio_columns = {
                 row[1] for row in connection.execute("PRAGMA table_info(studio_requests)")
             }
+            for name, definition in {"voice_id":"TEXT", "generation_json":"TEXT NOT NULL DEFAULT '{}'"}.items():
+                if name not in studio_columns:
+                    connection.execute(f"ALTER TABLE studio_requests ADD COLUMN {name} {definition}")
             if "source" not in studio_columns:
                 connection.execute(
                     "ALTER TABLE studio_requests ADD COLUMN source TEXT NOT NULL DEFAULT 'studio'"

@@ -1,5 +1,7 @@
 # Windows 새 PC 설치 가이드
 
+> 2026-09-26: 운영 기본 모델은 ZONOS2입니다. 아래 Qwen 설치는 비교 엔진 및 Whisper 검사 환경에도 사용됩니다. ZONOS2는 추가로 `powershell -ExecutionPolicy Bypass -File .\install-fish-zonos.ps1 -Engine zonos2`를 실행해 설치·등록하세요. 기본 레퍼런스는 기존 본인 목소리입니다.
+
 이 문서는 새 Windows PC에서 저장소를 복제하고 VoiceBench의 Qwen3-TTS 1.7B 음성 복제 서비스를 설치하는 절차입니다. 모델, 생성 음성, 개인 레퍼런스 음성, 웹 비밀번호, 외부 API 키는 Git에 포함되지 않습니다.
 
 ## 1. 권장 환경

@@ -19,10 +19,11 @@ def engine_spec(root, engine, manifest):
                str(root / "adapters" / ("fish_speech_worker.py" if fish else "zonos2_worker.py")),
                "--model-path", manifest["path"], "--port", "8790"]
     if not fish:
-        command += ["--binary", str(runtime / "build-cuda/zonos2-server.exe"), "--backend", "cuda"]
+        command += ["--binary", str(runtime / "build-cuda/zonos2-server.exe"), "--backend", "cuda",
+                    "--dac-device", "cpu"]
     return {
         "slug": "fish-s2-pro-experimental" if fish else "zonos2-q8-experimental",
-        "name": "Fish S2-Pro · BF16 · 연구/비상업 평가" if fish else "ZONOS2 · CUDA/Q8 · 음성 복제",
+        "name": "Fish S2-Pro · BF16 · 연구/비상업 평가" if fish else "ZONOS2 · 내 목소리 · 기본",
         "kind": "command", "enabled": True,
         "version": manifest["revision"],
         "config": {
@@ -40,6 +41,7 @@ def engine_spec(root, engine, manifest):
                 "health_url": "http://127.0.0.1:8790/health",
                 "model": "fishaudio/s2-pro" if fish else "Zyphra/ZONOS2-Q8_0",
                 "attention": "sdpa-math" if fish else "cuda", "startup_timeout_seconds": 360,
+                **({"runtime_version": 2} if not fish else {}),
                 "log_path": str(root / ".runtime/logs" / f"{engine}-worker.log"),
             },
         },
@@ -67,6 +69,14 @@ def main():
             raise SystemExit(f"Missing Python for {engine}")
         registered = service.upsert_engine(spec)
         print(f"Registered {registered['slug']} (id={registered['id']})")
+        if engine == "zonos2":
+            preset = runtime / "python-source/default_voices/AmericanMale.mp3"
+            if preset.is_file():
+                male = json.loads(json.dumps(spec))
+                male.update(slug="zonos2-q8-american-male", name="ZONOS2 · 기본 남성 AmericanMale")
+                male["config"]["reference_preset"] = "AmericanMale"
+                registered = service.upsert_engine(male)
+                print(f"Registered {registered['slug']} (id={registered['id']})")
 
 
 if __name__ == "__main__":

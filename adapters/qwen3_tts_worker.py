@@ -109,7 +109,21 @@ class QwenWorkerServer(ThreadingHTTPServer):
         output = Path(str(payload.get("output", ""))).resolve()
         language = LANGUAGES.get(str(payload.get("language", "ko")).lower(), "Korean")
         seed = int(payload.get("seed", 13))
-        generation = payload.get("generation") or {}
+        supplied_generation = payload.get("generation") or {}
+        if not isinstance(supplied_generation, dict):
+            raise ValueError("Unsupported generation parameters")
+        generation = dict(supplied_generation)
+        speaker = generation.pop("speaker", None)
+        instruct = generation.pop("instruct", "")
+        custom_voice = "CustomVoice" in getattr(self, "model_name", "")
+        if custom_voice:
+            supported = {v.lower() for v in self.model.get_supported_speakers()}
+            if not isinstance(speaker, str) or speaker.lower() not in supported:
+                raise ValueError("Unsupported built-in speaker")
+            if not isinstance(instruct, str) or len(instruct) > 300:
+                raise ValueError("Invalid voice instruction")
+        elif speaker or instruct:
+            raise ValueError("Built-in speakers require a CustomVoice model")
         allowed_generation = {
             "do_sample",
             "top_k",
@@ -126,55 +140,62 @@ class QwenWorkerServer(ThreadingHTTPServer):
             raise ValueError("Unsupported generation parameters")
         if "non_streaming_mode" in generation and not isinstance(generation["non_streaming_mode"], bool):
             raise ValueError("non_streaming_mode must be a boolean")
-        if not text or not reference or not reference_text:
+        if not text or (not custom_voice and (not reference or not reference_text)):
             raise ValueError("text, reference, and reference_text are required")
 
         with self.generation_lock:
-            reference_path = Path(reference).resolve()
-            cache_key = (
-                str(reference_path), reference_text,
-                hashlib.sha256(reference_path.read_bytes()).hexdigest(),
-            )
-            prompt = self.prompt_cache.get(cache_key)
-            if prompt is None:
-                prompt = self.model.create_voice_clone_prompt(
-                    ref_audio=cache_key[0],
-                    ref_text=reference_text,
-                    x_vector_only_mode=False,
+            context = None
+            if not custom_voice:
+                reference_path = Path(reference).resolve()
+                cache_key = (
+                    str(reference_path), reference_text,
+                    hashlib.sha256(reference_path.read_bytes()).hexdigest(),
                 )
-                if len(self.prompt_cache) >= 4:
-                    self.prompt_cache.pop(next(iter(self.prompt_cache)))
-                self.prompt_cache[cache_key] = prompt
-            context = payload.get("continuation")
-            if context is not None:
-                # Only the trusted runner and local comparison tools supply
-                # this context. External caller payloads never forward it.
-                info = sf.info(context["audio"])
-                if not 3 <= info.duration <= 20:
-                    raise ValueError("Continuation audio must be a complete 3–20 second segment")
-                prompt = continuation_prompt(
-                    self.model, prompt, context["audio"], context["text"],
-                    mode=context.get("mode", "replace"),
-                )
+                prompt = self.prompt_cache.get(cache_key)
+                if prompt is None:
+                    prompt = self.model.create_voice_clone_prompt(
+                        ref_audio=cache_key[0],
+                        ref_text=reference_text,
+                        x_vector_only_mode=False,
+                    )
+                    if len(self.prompt_cache) >= 4:
+                        self.prompt_cache.pop(next(iter(self.prompt_cache)))
+                    self.prompt_cache[cache_key] = prompt
+                context = payload.get("continuation")
+                if context is not None:
+                    # Only the trusted runner and local comparison tools supply
+                    # this context. External caller payloads never forward it.
+                    info = sf.info(context["audio"])
+                    if not 3 <= info.duration <= 20:
+                        raise ValueError("Continuation audio must be a complete 3–20 second segment")
+                    prompt = continuation_prompt(
+                        self.model, prompt, context["audio"], context["text"],
+                        mode=context.get("mode", "replace"),
+                    )
             # Prompt cache misses must not change the sampling RNG state.
             random.seed(seed)
             np.random.seed(seed)
             self.torch.manual_seed(seed)
             self.torch.cuda.manual_seed_all(seed)
             with self.torch.inference_mode():
-                wavs, sample_rate = self.model.generate_voice_clone(
-                    text=text,
-                    language=language,
-                    voice_clone_prompt=prompt,
-                    **generation,
-                )
+                if custom_voice:
+                    wavs, sample_rate = self.model.generate_custom_voice(
+                        text=text, language=language, speaker=speaker, instruct=instruct, **generation,
+                    )
+                else:
+                    wavs, sample_rate = self.model.generate_voice_clone(
+                        text=text,
+                        language=language,
+                        voice_clone_prompt=prompt,
+                        **generation,
+                    )
             output.parent.mkdir(parents=True, exist_ok=True)
             sf.write(output, wavs[0], sample_rate, subtype="PCM_16")
         return {
             "output": str(output),
             "sample_rate": sample_rate,
             "prompt_cache_entries": len(self.prompt_cache),
-            "generation": generation,
+            "generation": {**generation, **({"speaker":speaker,"instruct":instruct} if custom_voice else {})},
             "continuation_used": context is not None,
         }
 
@@ -191,6 +212,7 @@ class QwenWorkerHandler(BaseHTTPRequestHandler):
         self.send_json(
             {
                 "status": "ready",
+                "runtime_version": 3,
                 "model": self.server.model_name,
                 "dtype": self.server.dtype_name,
                 "attention": self.server.attention,

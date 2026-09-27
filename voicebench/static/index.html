@@ -2,71 +2,87 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
+  <meta name="voicebench-ui-version" content="__VOICEBENCH_UI_VERSION__">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>VoiceBench</title>
+  <title>VoiceBench Studio · 나만의 음성 작업실</title>
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/reference.css">
   <link rel="stylesheet" href="/studio.css">
+  <link rel="stylesheet" href="/workspace.css">
+  <link rel="stylesheet" href="/gallery.css">
+  <link rel="stylesheet" href="/usability.css">
 </head>
 <body>
   <div class="shell">
     <aside class="sidebar">
-      <div class="brand"><span class="brand-mark">V</span><div><strong>VoiceBench</strong><small>Local quality lab</small></div></div>
-      <nav>
-        <button class="nav-item active" data-view="studio"><span>01</span> TTS 스튜디오</button>
-        <button class="nav-item" data-view="workspace"><span>02</span> 벤치마크</button>
-        <button class="nav-item" data-view="review"><span>03</span> 블라인드 비교</button>
-        <button class="nav-item" data-view="engines"><span>04</span> 엔진 설정</button>
+      <div class="brand"><span class="brand-mark">V</span><div><strong>VoiceBench</strong><small>YOUR VOICE, YOUR STUDIO</small></div></div>
+      <nav aria-label="주 메뉴">
+        <small class="nav-label">WORKSPACE</small>
+        <button class="nav-item active" data-view="studio"><span>＋</span> 음성 만들기</button>
+        <button class="nav-item" data-view="voices"><span>◉</span> 목소리 보관함</button>
+        <button class="nav-item" data-view="history"><span>≋</span> 생성 기록</button>
+        <small class="nav-label">TOOLS</small>
+        <button class="nav-item" data-view="workspace"><span>⊞</span> 비교 실험</button>
+        <button class="nav-item" data-view="review"><span>⇄</span> 블라인드 비교</button>
+        <button class="nav-item" data-view="engines"><span>⚙</span> 모델 관리</button>
+        <button class="nav-item" data-view="connect"><span>↗</span> 자동화 연결</button>
       </nav>
       <div class="privacy-note"><span class="status-dot"></span><div><strong>완전 로컬</strong><small>파일을 외부로 전송하지 않습니다.</small></div></div>
     </aside>
 
     <main>
       <header class="topbar">
-        <div><p class="eyebrow">PRIVATE LOCAL VOICE STUDIO</p><h1 id="page-title">내 목소리 TTS</h1></div>
-        <div id="hardware-pill" class="hardware-pill">하드웨어 확인 중</div>
+        <div><p class="eyebrow">PRIVATE LOCAL VOICE STUDIO</p><h1 id="page-title">음성 만들기</h1></div>
+        <div class="topbar-status"><span id="connection-status" class="connection-status" role="status">연결 확인 중</span><div id="hardware-pill" class="hardware-pill">하드웨어 확인 중</div></div>
       </header>
 
-      <section id="flash" class="flash hidden"></section>
+      <section id="flash" class="flash hidden" role="status" aria-live="polite"></section>
 
+      <section id="connection-banner" class="connection-banner hidden" role="status"><p>서버에 연결하지 못했습니다. 대본은 이 브라우저에 남아 있습니다. VoiceBench 폴더의 <b>Start-Studio.cmd</b>를 실행해 주세요. 10초마다 다시 연결합니다.</p><button type="button" id="connection-retry" class="ghost">지금 다시 연결</button></section>
+      <section id="update-banner" class="update-banner hidden" role="status"><p>새 화면 버전이 준비됐습니다. 대본과 생성 설정을 저장한 뒤 새로고침할 수 있어요. 등록 중인 녹음 파일은 새로 선택해야 합니다.</p><button type="button" id="update-reload" class="ghost">대본·설정 유지하고 새로고침</button></section>
       <section id="studio-view" class="view active">
-        <article class="studio-composer">
-          <div class="studio-status-row">
-            <div class="voice-identity"><span class="voice-orb"></span><div><small>SELECTED VOICE</small><strong id="studio-voice-name">내 목소리 준비 중</strong></div></div>
-            <span id="studio-engine-state" class="tag muted">엔진 확인 중</span>
-          </div>
-          <div class="studio-copy">
-            <p class="eyebrow">SCRIPT TO SPEECH</p>
-            <h2>내 목소리로 읽을 대본을 입력하세요.</h2>
-            <p>질문·전환어·문단을 분석해 낭독 호흡을 계획하고, 생성한 조각을 하나의 WAV로 완성합니다. 발음 자동 검사 지원 여부는 선택한 엔진 안내에서 확인하세요.</p>
-          </div>
-          <form id="studio-form">
+        <div class="welcome voice-welcome"><div><h2>내 이야기를, 원하는 목소리로.</h2><p>샘플로 목소리를 고르고 대본을 입력하세요.</p></div></div>
+        <form id="studio-form" class="creation-grid">
+          <article class="editor-panel">
+            <div class="panel-title"><div><span class="step">01</span><h2>대본</h2></div><label class="ghost file-button">TXT 불러오기<input id="script-file" type="file" accept=".txt,text/plain"></label></div>
             <label for="studio-text" class="sr-only">합성할 대본</label>
-            <textarea id="studio-text" placeholder="예: 안녕하세요. 오늘은 새로운 이야기를 들려드리겠습니다." required></textarea>
-            <div class="composer-footer">
-              <div class="composer-meta"><span id="studio-char-count">0자</span><span id="studio-segment-estimate" aria-live="polite">0구간</span></div>
-              <div class="composer-actions"><label>엔진 <select id="studio-engine"></select></label><label>Seed <input id="studio-seed" type="number" value="13" min="0" max="2147483647"></label><button id="studio-generate" class="primary" type="submit">음성 만들기</button></div>
-            </div>
-          </form>
-          <details id="studio-plan-preview" class="hidden">
-            <summary>실제 생성 구간 보기</summary>
-            <p class="support">대본의 길이와 문장·문단 경계에 따라 나눕니다. 출력 시간은 말하는 속도에 따라 달라집니다.</p>
-            <ol id="studio-plan-segments"></ol>
-          </details>
-          <p class="studio-note"><span></span>장문 HQ 모드: 문단과 의미 전환에 맞춰 호흡을 구성합니다. Qwen 엔진은 CPU 음성인식으로 명확한 실패를 감지하면 자동 재생성합니다.</p>
-        </article>
+            <textarea id="studio-text" placeholder="어떤 이야기를 들려주고 싶으세요?
 
-        <article id="studio-active" class="card studio-active hidden">
-          <div class="card-heading"><div><span class="step">●</span><h2>음성을 만들고 있습니다</h2></div><span id="studio-active-state" class="tag">대기</span></div>
-          <div class="progress-track"><span id="studio-progress-bar"></span></div>
-          <p id="studio-progress-label" class="support">작업을 준비하고 있습니다.</p>
-        </article>
+읽을 문장을 여기에 입력하세요." required></textarea>
+            <div class="editor-meta"><span id="studio-char-count">0자</span><span id="studio-segment-estimate" aria-live="polite">0구간</span><span id="draft-state">이 브라우저에 자동 저장</span></div>
+            <div class="editor-tools"><button class="ghost" id="script-example" type="button">예시 대본</button><button class="ghost" id="script-save" type="button">대본 저장</button><button class="ghost" id="script-clear" type="button">비우기</button></div>
+            <details id="studio-plan-preview" class="hidden"><summary>생성 구간 미리보기</summary><p class="support">짧은 대본은 한 번에, 긴 대본은 문장·문단 경계에 맞춰 생성합니다.</p><ol id="studio-plan-segments"></ol></details>
+          </article>
+          <aside class="settings-panel">
+            <div class="panel-title"><div><span class="step">✓</span><h2>선택한 목소리</h2></div></div>
 
-        <article class="card studio-history-card">
-          <div class="card-heading"><div><span class="step">H</span><h2>최근 생성 결과</h2></div><button id="studio-refresh" class="ghost">새로고침</button></div>
-          <div id="studio-history" class="studio-history empty-state">아직 생성한 음성이 없습니다.</div>
-        </article>
+            <label class="field hidden">등록 목소리<select id="studio-voice"><option value="">모델 기본 목소리</option></select></label>
+            <div class="voice-identity"><span class="voice-orb"></span><div><small>SELECTED VOICE</small><strong id="studio-voice-name">내 목소리 준비 중</strong></div></div>
+            <p id="studio-engine-state" class="support">엔진 확인 중</p>
+            <p id="selected-voice-description" class="support"></p><div class="voice-actions"><button id="voice-picker-open" class="primary" type="button">목소리 변경 · 미리듣기</button><button id="selected-preview" class="ghost" type="button">▶ 선택한 목소리 듣기</button></div>
+            <details class="advanced" id="voice-advanced"><summary>고급 설정 · 직접 조정</summary><label class="field">추론 모델 / 프리셋<select id="studio-engine"></select></label><p class="support">목소리와 추론 설정은 별개입니다. 샘플링 수치를 높인다고 더 밝은 감정이 되지는 않습니다.</p><div id="voice-custom-controls"></div><label id="voice-instruction-field" class="field hidden">낭독 지시<textarea id="voice-instruction" maxlength="300" placeholder="예: 과장 없이 차분하게 설명해 주세요."></textarea></label><button id="voice-reset-settings" class="ghost" type="button">모델 기본값 복원</button><label class="field">Seed<input id="studio-seed" type="number" value="13" min="0" max="2147483647"></label><p class="support">같은 모델·목소리·대본에서 결과의 변화를 비교합니다. 기본값은 13입니다.</p><label class="field">검사 모드<select id="studio-quality"><option value="long_form_hq">HQ · 자동 검사 및 재시도</option><option value="standard">기본 · 발음 재시도 생략</option></select></label></details>
+            <p class="support">기본 ZONOS2는 감정을 강제로 강조하지 않습니다. HQ의 발음 검사는 ZONOS2·Qwen에서 지원됩니다.</p>
+          </aside>
+          <footer class="compose-actions"><div><strong id="compose-selection">목소리 준비 중</strong><small id="compose-status">대본을 입력하면 생성할 수 있어요.</small></div><button id="studio-generate" class="primary" type="submit" disabled>음성 만들기</button></footer>
+        </form>
+        <article id="studio-active" class="card studio-active hidden"><div class="card-heading"><h2>음성을 만들고 있습니다</h2><span id="studio-active-state" class="tag">대기</span></div><div class="progress-track"><span id="studio-progress-bar"></span></div><p id="studio-progress-label" class="support"></p><button class="ghost" type="button" data-go="history">작업 기록 확인 →</button></article>
+        <article class="card latest-card"><div class="card-heading"><h2>최근 완성한 음성</h2><button class="ghost" type="button" data-go="history">모든 기록 →</button></div><div id="studio-latest" class="support">아직 완성한 음성이 없습니다.</div></article>
       </section>
+
+      <section id="voices-view" class="view">
+        <div class="section-intro"><h2>다시 쓰고 싶은 목소리를 모아두세요.</h2><p>깨끗한 녹음과 그 녹음의 대본을 등록하면 음성 만들기에서 선택할 수 있습니다.</p></div>
+        <div class="grid two"><article class="card"><div class="card-heading"><h2>새 목소리 등록</h2><span class="tag">VOICE CLONING</span></div>
+          <form id="voice-form" class="stack-form"><label>목소리 이름<input id="voice-name" maxlength="80" required placeholder="예: 내 목소리 · 차분한 낭독"></label><label>레퍼런스 녹음<input id="voice-file" type="file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg,.webm" required></label><p class="support">WAV·MP3·M4A 등 브라우저가 읽을 수 있는 음성 · 최대 30MB / 5분<br>배경 음악 없이 한 사람이 말하는 3~30초를 골라 주세요. WAV 규격은 자동으로 맞춥니다.</p><p id="clip-state" class="clip-state" role="status" aria-live="polite">녹음 파일을 선택하면 구간을 편집할 수 있어요.</p><div id="clip-editor" class="clip-editor hidden"><div class="clip-range"><label>시작 (초)<input id="clip-start" type="number" min="0" step="0.1" value="0"></label><label>끝 (초)<input id="clip-end" type="number" min="3" step="0.1" value="10"></label></div><audio id="clip-audio" controls preload="metadata"></audio><div class="clip-actions"><button type="button" id="clip-apply" class="ghost">구간 적용 · 미리듣기</button></div><p class="support">문장 중간이 잘리지 않도록 끝까지 들어보세요. 등록에는 적용한 구간만 사용합니다.</p></div><div class="transcript-actions"><button type="button" id="voice-transcribe" class="ghost" disabled>녹음 대본 자동 인식</button><span class="support">로컬 한국어 인식 · 결과를 확인하고 수정해 주세요.</span></div><label>녹음에서 읽은 문장<textarea id="voice-transcript" required placeholder="녹음에 들리는 문장을 정확히 입력하세요."></textarea></label><label class="consent"><input id="voice-consent" type="checkbox" required> 본인 또는 사용 허락을 받은 목소리입니다.</label><button id="voice-submit" class="primary" type="submit">목소리 등록</button></form></article>
+          <article class="card"><div class="card-heading"><h2>목소리 보관함</h2></div><div id="voice-library"></div><p class="support">자동화 API는 기존 본인 목소리를 계속 사용합니다. 여기서 등록한 목소리는 웹에서 선택해 사용합니다.</p></article></div>
+      </section>
+
+      <section id="history-view" class="view"><article class="card studio-history-card"><div class="card-heading"><h2>생성 기록 <span id="history-count" class="tag"></span></h2><button id="studio-refresh" class="ghost">새로고침</button></div><div class="history-filters"><label class="sr-only" for="history-search">대본 검색</label><input id="history-search" type="search" placeholder="대본 또는 모델 이름 검색"><label class="sr-only" for="history-status">상태</label><select id="history-status"><option value="">모든 상태</option><option value="succeeded">완료</option><option value="running">생성 중</option><option value="queued">대기 중</option><option value="failed">실패</option><option value="cancelled">취소</option></select></div><p class="support">최근 50개 요청 · 대본을 다시 불러와 수정하거나 같은 설정으로 생성할 수 있습니다.</p><div id="studio-history" class="studio-history empty-state">아직 생성한 음성이 없습니다.</div></article></section>
+
+      <section id="connect-view" class="view"><div class="section-intro"><h2>혼자 써도, 자동화와 함께 써도.</h2><p>이 스튜디오와 자동화는 같은 작업 큐와 생성 기록을 공유합니다.</p></div><div class="grid two"><article class="card"><div class="card-heading"><h2>외부 API</h2><span class="tag">REST</span></div><p class="support">서버의 API 키를 Bearer 토큰으로 전달하세요. 화면에는 키를 표시하지 않습니다.</p><pre class="api-example">POST /v1/tts
+Authorization: Bearer YOUR_API_KEY
+Content-Type: application/json
+
+{"text": "안녕하세요. 오늘의 이야기입니다."}</pre><p class="support">GET /v1/tts/{id}로 진행 상태를 확인한 뒤, 응답의 audio_url에서 WAV를 받습니다.</p></article><article class="card"><div class="card-heading"><h2>연결 정책</h2></div><dl class="policy-list"><dt>기본 모델</dt><dd>ZONOS2 Q8 · CUDA</dd><dt>목소리</dt><dd>기존 본인 목소리 복제</dd><dt>Seed / 검사</dt><dd>13 / 장문 HQ</dd><dt>에이전트 연결</dt><dd>MCP 서버: tools/voicebench_mcp.py</dd></dl><p class="support">외부 API의 모델·목소리·Seed는 서버가 고정합니다. 웹에서 바꾼 설정은 외부 요청에 영향을 주지 않습니다.</p></article></div></section>
 
       <section id="workspace-view" class="view">
         <div class="grid two">
@@ -142,7 +158,23 @@
     </main>
   </div>
 
+  <dialog id="voice-picker" aria-labelledby="voice-picker-title">
+        <section class="voice-browser" aria-label="목소리 둘러보기">
+          <div class="picker-sticky"><div class="picker-title"><h2 id="voice-picker-title">목소리 둘러보기 <span id="gallery-count" class="tag"></span></h2><button id="voice-picker-close" class="ghost" type="button" aria-label="목소리 선택 창 닫기">닫기 ×</button></div>
+          <p class="picker-current" id="picker-current" aria-live="polite"></p></div>
+          <div class="voice-categories" aria-label="목소리 분류"><button type="button" class="ghost" data-category="official" aria-pressed="true">기본 목소리</button><button type="button" class="ghost" data-category="personal" aria-pressed="false">내 목소리</button><button type="button" class="ghost" data-category="comparison" aria-pressed="false">모델별 비교</button><button type="button" class="ghost" id="picker-register">＋ 목소리 등록</button></div>
+          <div class="voice-filters"><label class="voice-search"><span aria-hidden="true">⌕</span><input id="voice-search" type="search" aria-label="목소리 검색" placeholder="이름, 분위기, 언어로 검색"></label><select id="voice-gender" aria-label="목소리 성별"><option value="">모든 목소리</option><option value="female">여성</option><option value="male">남성</option><option value="personal">내 목소리</option></select><button id="voice-favorites" class="ghost" type="button" aria-pressed="false">☆ 즐겨찾기</button></div>
+          <p class="filter-caption">목록 필터 · 카드를 선택해야 생성 목소리가 바뀝니다.</p><div id="voice-model-tabs" class="model-tabs" aria-label="음성 모델 필터"></div>
+          <p id="gallery-explanation" class="support">샘플은 저장된 음성으로 재생되며 새 생성 작업을 만들지 않습니다.</p>
+          <div id="voice-cards" class="voice-cards" aria-live="polite"></div>
+        </section>
+  </dialog>
   <dialog id="project-dialog"><form id="project-form" method="dialog"><div class="dialog-heading"><h2>새 벤치마크 프로젝트</h2><button value="cancel" class="icon-button">×</button></div><label>프로젝트 이름<input id="project-name" required placeholder="내 목소리 · 파일럿 01"></label><label>설명<textarea id="project-description" placeholder="마이크, 녹음 세션, 목표를 기록하세요."></textarea></label><button class="primary" value="default">프로젝트 만들기</button></form></dialog>
-  <script src="/app.js?v=20260822-natural-stitching"></script>
+  <aside id="preview-dock" class="preview-dock hidden" aria-label="목소리 샘플 플레이어"><div><strong id="preview-title"></strong><small id="preview-caption"></small></div><audio id="voice-audition" controls preload="none"></audio><a id="preview-download" class="ghost" download>샘플 저장</a><button id="preview-close" class="ghost" type="button" aria-label="샘플 플레이어 닫기">×</button></aside>
+  <script src="/app.js?v=20260928-usability"></script>
+  <script src="/workspace.js?v=20260928-usability"></script>
+  <script src="/gallery.js?v=20260928-usability"></script>
+  <script src="/usability.js?v=20260928-usability"></script>
+  <script src="/recording.js?v=20260928-usability"></script>
 </body>
 </html>

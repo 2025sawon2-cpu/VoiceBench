@@ -25,15 +25,31 @@ function flash(message, error = false) {
 }
 
 async function loadState() {
-  app.state = await api('/api/state');
+  app.state = await api('/api/state', {signal: AbortSignal.timeout(12000)});
   renderHardware(); renderProjects(); renderEngines();
   await loadStudio();
   if (!app.project && app.state.projects.length) await selectProject(app.state.projects[0].id);
 }
 
 async function loadStudio() {
-  app.studio = await api('/api/studio');
-  renderStudio();
+  if (app.studioLoading) return app.studioLoading;
+  app.studioLoading = (async () => {
+  try {
+    app.studio = await api('/api/studio', {signal: AbortSignal.timeout(12000)});
+    app.connected = true;
+    renderStudio();
+    if (typeof updateConnection === 'function') updateConnection(true);
+  } catch (error) {
+    app.connected = false;
+    if (typeof updateConnection === 'function') updateConnection(false);
+    if (app.studioPoller) {
+      clearInterval(app.studioPoller);
+      app.studioPoller = setInterval(() => loadStudio().catch(() => {}), 10000);
+    }
+    throw error;
+  } finally { app.studioLoading = null; }
+  })();
+  return app.studioLoading;
 }
 
 function studioStatusLabel(status) {
@@ -42,11 +58,15 @@ function studioStatusLabel(status) {
 
 function renderStudioEngineState() {
   const engine = app.studio?.studio_engines?.find(item => item.slug === $('#studio-engine').value);
-  const available = app.studio?.available && Boolean(engine);
-  const quality = engine?.slug.startsWith('qwen3-tts-') ? '자동 발음·파형 검사' : '파형 검사 · 발음 자동 재시도 없음';
-  $('#studio-engine-state').textContent = available ? `${engine.name} · ${quality}` : '엔진 준비 필요';
+  const galleryVoice = app.studio?.voice_catalog?.find(v => v.id === app.voiceId);
+  const customVoice = app.studio?.voices?.find(v => String(v.id) === $('#studio-voice').value);
+  const available = (galleryVoice ? galleryVoice.available : customVoice ? customVoice.available && !engine?.fixed_voice : (engine?.available ?? app.studio?.available)) && Boolean(engine);
+  const quality = $('#studio-quality').value === 'standard' ? '기본 검사 · 발음 자동 재시도 없음' : (engine?.quality_control_supported ?? /^(qwen3-tts-|zonos2-)/.test(engine?.slug || '')) ? '자동 발음·파형 검사' : '파형 검사 · 발음 자동 재시도 없음';
+  $('#studio-voice-name').textContent = galleryVoice?.name || customVoice?.name || engine?.voice_name || app.studio?.voice?.name || '레퍼런스 미등록';
+  $('#studio-engine-state').textContent = available ? `${engine.model_label || galleryVoice?.model || engine.name.split(' · ')[0]} · ${quality}` : '엔진 준비 필요';
   $('#studio-engine-state').classList.toggle('muted', !available);
-  $('#studio-generate').disabled = !available;
+  $('#studio-generate').disabled = !available || Boolean(app.submitting) || app.connected === false;
+  if (typeof renderComposeSummary === 'function') renderComposeSummary();
 }
 
 function renderStudio() {
@@ -63,6 +83,8 @@ function renderStudio() {
   } else if ([...engineSelect.options].some(option => option.value === studio.default_engine_slug)) {
     engineSelect.value = studio.default_engine_slug;
   }
+  if (typeof renderWorkspace === 'function') renderWorkspace();
+  if (typeof renderVoiceGallery === 'function') renderVoiceGallery();
   renderStudioEngineState();
 
   const active = studio.requests.find(item => item.id === studio.processing_request_id)
@@ -89,23 +111,35 @@ function renderStudio() {
     history.textContent = '아직 생성한 음성이 없습니다.';
   } else {
     history.className = 'studio-history';
-    history.innerHTML = studio.requests.map((item, index) => {
+    const query = ($('#history-search').value || '').toLowerCase();
+    const status = $('#history-status').value;
+    const visible = studio.requests.filter(item => (!status || item.status === status) && `${item.original_text} ${item.engine_name}`.toLowerCase().includes(query));
+    $('#history-count').textContent = `${visible.length}개`;
+    const signature = JSON.stringify(visible);
+    if (history.dataset.signature !== signature) {
+    history.dataset.signature = signature;
+    history.innerHTML = visible.map((item, index) => {
       const date = new Date(item.created_at).toLocaleString('ko-KR', {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
       const progress = `${item.completed_segments || 0}/${item.segment_count || 0}조각`;
       const source = item.source === 'external_api' ? 'MCP/API' : '웹';
       const engine = item.engine_name || item.engine_slug || '엔진 정보 없음';
       const quality = item.quality_control || {};
+      const performance = item.performance || {};
+      const performanceLabel = performance.processing_seconds
+        ? ` · 처리 ${Number(performance.processing_seconds).toFixed(1)}초(로딩·검사 포함)`
+          + (performance.gpu_memory_pressure ? ' · GPU 메모리 여유 부족: 다른 GPU 작업과 동시 실행 시 느려질 수 있음' : '')
+        : '';
       const fallbackSeeds = Object.entries(quality.selected_seed_counts || {})
         .filter(([seed]) => Number(seed) !== Number(item.seed))
         .map(([seed, count]) => `Seed ${seed} ${count}조각`);
       const seedLabel = fallbackSeeds.length
         ? `기본 Seed ${item.seed} · QA 대체 ${fallbackSeeds.join(', ')}`
         : `Seed ${item.seed}`;
-      const qualityLabel = quality.checked_segments
+      const qualityLabel = performanceLabel + (quality.checked_segments
         ? ` · 품질검사 ${quality.checked_segments}/${item.segment_count || 0}`
           + (quality.regenerated_segments ? ` · 재생성 ${quality.regenerated_segments}조각` : '')
           + (quality.warning_segments ? ` · 경고 ${quality.warning_segments}조각` : '')
-        : '';
+        : '');
       const speechPlan = item.speech_plan || {};
       const roleCounts = speechPlan.role_counts || {};
       const expressiveUnits = Number(roleCounts.question || 0)
@@ -137,8 +171,9 @@ function renderStudio() {
             return `<div class="chapter-item"><span><b>${chapter.position}장</b><small>${chapter.character_count.toLocaleString()}자</small></span><div>${chapterAudio}</div></div>`;
           }).join('')}</details>`
         : '';
-      return `<div class="studio-result ${item.id === studio.processing_request_id ? 'is-processing' : ''}"><div class="studio-result-main"><span class="studio-result-index">#${item.id}</span><div class="studio-result-copy"><strong>${escapeHtml(item.original_text)}</strong><small><b class="source-badge">${source}</b> · 엔진 ${escapeHtml(engine)} · ${date} · ${seedLabel} · ${progress}${planSummary}${qualityLabel}${continuityLabel}${queue}${item.duration_seconds ? ` · ${Number(item.duration_seconds).toFixed(1)}초` : ''}</small>${chapters}</div></div><div class="studio-result-actions">${audio}${cancel}</div></div>`;
-    }).join('');
+      return `<div class="studio-result ${item.id === studio.processing_request_id ? 'is-processing' : ''}"><div class="studio-result-main"><span class="studio-result-index">#${item.id}</span><div class="studio-result-copy"><details><summary>${escapeHtml(item.original_text.slice(0, 100))}</summary><p class="full-script">${escapeHtml(item.original_text)}</p></details><small><b class="source-badge">${source}</b> · ${escapeHtml(item.voice_name || "기본 목소리")} · ${escapeHtml(engine.split(" · ")[0])} · ${date}${queue}${item.duration_seconds ? ` · ${Number(item.duration_seconds).toFixed(1)}초` : ''}</small><details class="run-details"><summary>생성 설정과 검사 결과</summary><small>엔진 ${escapeHtml(engine)} · ${seedLabel} · ${progress}${planSummary}${qualityLabel}${continuityLabel}</small></details>${chapters}</div></div><div class="studio-result-actions">${audio}<button class="ghost studio-reuse" data-request-id="${item.id}">다시 사용</button>${cancel}</div></div>`;
+    }).join('') || '<p class="empty-state">검색 조건에 맞는 결과가 없습니다.</p>';
+    $$('.studio-reuse').forEach(button => button.onclick = () => reuseStudioRequest(Number(button.dataset.requestId)));
     $$('.studio-cancel').forEach(button => button.onclick = async () => {
       const id = Number(button.dataset.requestId);
       if (!confirm(`요청 #${id}의 남은 생성 조각을 취소할까요?`)) return;
@@ -147,10 +182,10 @@ function renderStudio() {
       await loadStudio();
     });
   }
-  clearInterval(app.studioPoller);
-  if (studio.requests.some(item => ['queued','running'].includes(item.status))) {
-    app.studioPoller = setInterval(() => loadStudio().catch(error => flash(error.message, true)), 1800);
   }
+  clearInterval(app.studioPoller);
+  const interval = studio.requests.some(item => ['queued','running'].includes(item.status)) ? 1800 : 10000;
+  app.studioPoller = setInterval(() => loadStudio().catch(() => {}), interval);
 }
 
 function renderHardware() {
@@ -265,7 +300,7 @@ async function loadComparison() {
 function switchView(name) {
   $$('.nav-item').forEach(node => node.classList.toggle('active', node.dataset.view === name));
   $$('.view').forEach(node => node.classList.toggle('active', node.id === `${name}-view`));
-  $('#page-title').textContent = ({studio:'내 목소리 TTS',workspace:'벤치마크',review:'블라인드 비교',engines:'엔진 설정'})[name];
+  $('#page-title').textContent = ({studio:'음성 만들기',voices:'목소리 보관함',history:'생성 기록',connect:'자동화 연결',workspace:'비교 실험',review:'블라인드 비교',engines:'모델 관리'})[name];
   if (name === 'review') { loadComparison(); renderScores(); }
 }
 
@@ -277,7 +312,12 @@ $$('.nav-item').forEach(node => node.onclick = () => switchView(node.dataset.vie
 let studioPreviewTimer;
 let studioPreviewController;
 let studioPreviewVersion = 0;
-$('#studio-engine').onchange = renderStudioEngineState;
+$('#studio-engine').onchange = () => {
+  if (typeof galleryEngineChanged === 'function') galleryEngineChanged();
+  if (typeof renderWorkspace === 'function') renderWorkspace();
+  renderStudioEngineState();
+  $('#studio-text').dispatchEvent(new Event('input'));
+};
 $('#studio-text').oninput = event => {
   const text = event.target.value;
   const length = text.length;
@@ -292,7 +332,7 @@ $('#studio-text').oninput = event => {
   studioPreviewTimer = setTimeout(async () => {
     studioPreviewController = new AbortController();
     try {
-      const plan = await api('/api/studio/preview', {...jsonOptions({text}), signal: studioPreviewController.signal});
+      const plan = await api('/api/studio/preview', {...jsonOptions({text, engine_slug:$('#studio-engine').value || app.studio?.default_engine_slug}), signal: studioPreviewController.signal});
       if (version !== studioPreviewVersion) return;
       $('#studio-segment-estimate').textContent = plan.segment_count === 1
         ? '한 번에 생성 · 구간 연결 없음'
@@ -313,8 +353,11 @@ $('#studio-text').oninput = event => {
 };
 $('#studio-form').onsubmit = async event => {
   event.preventDefault();
+  if (app.submitting) return;
+  if (app.connected === false) return flash('서버를 다시 연결한 뒤 생성해 주세요.', true);
   const text = $('#studio-text').value.trim();
   if (!text) return flash('합성할 대본을 입력하세요.', true);
+  app.submitting = true;
   $('#studio-generate').disabled = true;
   $('#studio-generate').textContent = '요청 중…';
   try {
@@ -322,16 +365,16 @@ $('#studio-form').onsubmit = async event => {
       text,
       seed:Number($('#studio-seed').value || 13),
       engine_slug:$('#studio-engine').value || app.studio?.default_engine_slug,
-      quality_mode:'long_form_hq',
+      quality_mode:$('#studio-quality').value || 'long_form_hq',
+      ...((typeof galleryRequestOptions === 'function') ? galleryRequestOptions() : ($('#studio-voice').value ? {voice_project_id:Number($('#studio-voice').value)} : {})),
     }));
-    $('#studio-text').value = '';
-    $('#studio-text').dispatchEvent(new Event('input'));
     await loadStudio();
     flash('음성 생성을 시작했습니다.');
   } catch (error) { flash(error.message, true); }
   finally {
+    app.submitting = false;
     $('#studio-generate').textContent = '음성 만들기';
-    $('#studio-generate').disabled = !app.studio?.available;
+    renderStudioEngineState();
   }
 };
 $('#studio-refresh').onclick = () => loadStudio().then(() => flash('생성 이력을 새로고침했습니다.')).catch(error => flash(error.message,true));
@@ -387,4 +430,4 @@ $('#engine-form').onsubmit = async event => {
   } catch(error) { flash(error.message,true); }
 };
 
-loadState().catch(error => flash(error.message, true));
+loadState().catch(error => {app.connected = false; if (typeof updateConnection === 'function') updateConnection(false); else flash(error.message, true);});

@@ -28,7 +28,7 @@ from tools.compare_continuity import require_free_gpu
 from tools.compare_prosody import SAMPLE
 from voicebench.audio import concatenate_wavs, inspect_wav
 from voicebench.quality import WhisperQualityVerifier
-from voicebench.service import STUDIO_DEFAULT_SEED, STUDIO_ENGINE_SLUG, plan_script
+from voicebench.service import STUDIO_DEFAULT_SEED, QWEN_EXPRESSIVE_SLUG, plan_script
 from voicebench.util import atomic_write_bytes, sha256_file
 
 
@@ -73,7 +73,7 @@ def experiment_spec(
         raise ValueError("Shorts comparison requires one real Studio generation per script")
     return {
         "version": 1,
-        "engine_slug": STUDIO_ENGINE_SLUG,
+        "engine_slug": QWEN_EXPRESSIVE_SLUG,
         "model": config["worker"]["model"],
         "dtype": "fp16",
         "attention": config["worker"].get("attention", "eager"),
@@ -164,7 +164,7 @@ def main() -> None:
         for table in ("jobs", "studio_requests"):
             if db.execute(f"SELECT COUNT(*) FROM {table} WHERE status IN ('queued','running')").fetchone()[0]:
                 raise SystemExit("Wait until the production TTS queue is idle")
-        config = json.loads(db.execute("SELECT config_json FROM engines WHERE slug=? AND enabled=1", (STUDIO_ENGINE_SLUG,)).fetchone()[0])
+        config = json.loads(db.execute("SELECT config_json FROM engines WHERE slug=? AND enabled=1", (QWEN_EXPRESSIVE_SLUG,)).fetchone()[0])
     reference = ROOT / "data/prepared/ref_voice/selected_reference.wav"
     variants = INPUT_MODE_VARIANTS if args.suite == "input_mode" else VARIANTS
     spec = experiment_spec(config, reference, SCRIPTS, variants)

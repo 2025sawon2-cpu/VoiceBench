@@ -1,0 +1,44 @@
+/* A short composition path, with browsing in its own accessible dialog. */
+:root{--muted:#596574}
+.support,.editor-meta,.section-intro p,.voice-tile p,.studio-result-copy small{color:#596574;font-size:13px;line-height:1.7}
+.ghost,.field,.advanced,.field select,.field input,.download-button,.history-filters input,.history-filters select{font-size:13px}
+.ghost,.model-tab,.preview-button,.favorite-button{min-height:40px}
+.panel-title h2,.card h2{font-size:16px}
+.tag,.voice-tags span,.voice-model,.run-details summary{font-size:12px;color:#4b6044}
+.hardware-pill{font-size:11px;color:#596574}.topbar{margin-bottom:20px}
+.voice-welcome{padding:0 0 20px}.voice-welcome h2{font-size:25px;margin:0 0 6px}.voice-welcome p:last-child{font-size:14px;color:#596574}
+#studio-form.creation-grid{grid-template-columns:minmax(0,1fr) 310px;gap:16px}
+.settings-panel{position:static}.settings-panel #studio-engine-state,.settings-panel>.support:last-child,#selected-voice-description{font-size:13px;color:#53624e}
+.voice-identity strong{font-size:16px}.voice-identity small{font-size:11px;color:#53624e}
+.voice-actions{display:grid;gap:8px;margin:12px 0}.voice-actions button{width:100%;margin:0!important}
+#studio-text{min-height:250px!important;font-size:16px}.editor-meta{font-size:12px}#studio-text::placeholder{color:#677383}
+#voice-custom-controls .field{font-size:12px}.advanced summary{font-weight:600}
+.compose-actions{grid-column:1/-1;display:flex;align-items:center;gap:18px;position:sticky;bottom:12px;z-index:10;background:#fff;border:1px solid #cbd6c8;border-radius:12px;padding:14px 18px;box-shadow:0 4px 18px #23302010}
+.compose-actions>div{flex:1;min-width:0}.compose-actions strong,.compose-actions small{display:block;overflow-wrap:anywhere}.compose-actions small{font-size:12px;color:#596574;margin-top:5px}
+#studio-generate{width:auto;min-width:190px;margin:0;min-height:48px}
+.connection-status{font-size:13px;color:#36563b;white-space:nowrap}.connection-status[data-state=offline]{color:#923b2c}
+.topbar-status{display:flex;align-items:center;justify-content:flex-end;gap:14px}.topbar-status .hardware-pill{max-width:340px}
+.connection-banner,.update-banner{border:1px solid #dfb789;background:#fff6e9;border-radius:10px;padding:14px 18px;margin-bottom:16px;font-size:14px;line-height:1.7;color:#71451c}
+.connection-banner p,.update-banner p{margin:0 0 8px}.update-banner{background:#edf4eb;border-color:#b7cbb2;color:#34532d}
+#voice-picker{width:min(1040px,calc(100% - 32px));max-width:none;max-height:90dvh;padding:0;border:1px solid #ccd5c9;border-radius:16px;color:var(--ink);overflow:auto}
+#voice-picker::backdrop{background:#17221b70;backdrop-filter:blur(3px)}
+#voice-picker .voice-browser{border:0;margin:0;padding:22px}
+.picker-title{display:flex;justify-content:space-between;align-items:center;gap:12px}.picker-title h2{font-size:21px;margin:0}
+.picker-current{padding:10px 12px;background:#edf3e8;border-radius:8px;font-size:13px;line-height:1.6;margin:14px 0;color:#355239}
+.voice-categories{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}.voice-categories button[aria-pressed=true]{background:#49694d;color:#fff}
+#voice-picker .voice-cards{max-height:none;overflow:visible;padding:3px;grid-template-columns:repeat(3,minmax(0,1fr))}
+.voice-choose strong{font-size:16px}.voice-choose>span{font-size:13px;color:#52604f}.voice-card-bottom small{font-size:12px}.preview-button{font-size:13px;color:#3d6134}
+.favorite-button{color:#657456;min-width:40px}.favorite-button[aria-pressed=true]{color:#8d6810}
+.filter-caption{font-size:12px;color:#596574;margin:12px 0 0}.model-tabs{padding-top:6px}.model-tab{color:#53604e}
+#voice-picker .preview-dock{position:sticky;bottom:0;left:auto;right:auto;margin:0 16px 12px;gap:12px;flex-wrap:wrap;z-index:2;padding:12px}
+#voice-picker .preview-dock>div{flex-basis:35%}#voice-picker .preview-dock audio{flex:1;min-width:220px}
+.preview-dock{bottom:94px}body:has(#voice-picker[open]){overflow:hidden}
+.clip-editor{border:1px solid var(--line);border-radius:10px;padding:14px;background:#f8faf7}.clip-editor audio{width:100%;margin:12px 0}
+.clip-range{display:grid;grid-template-columns:1fr 1fr;gap:12px}.clip-range label{min-width:0}.clip-range input{width:100%}
+.clip-actions{display:flex;flex-wrap:wrap;gap:8px}.clip-state{font-size:13px;line-height:1.7;color:#405b37;overflow-wrap:anywhere}.clip-state.error{color:#a03624}
+.transcript-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.stack-form label{font-size:14px}.stack-form input,.stack-form textarea{font-size:14px}
+@media(max-width:1000px){#studio-form.creation-grid{grid-template-columns:minmax(0,1fr) 270px}.topbar-status .hardware-pill{display:none}}
+@media(max-width:850px){#studio-form.creation-grid{grid-template-columns:1fr}.settings-panel{grid-row:1}.settings-panel .panel-title,.settings-panel>.support:last-child{display:none}.settings-panel .voice-identity{margin-top:0}.voice-actions{grid-template-columns:1fr 1fr}.voice-identity{margin-bottom:8px}.compose-actions{grid-column:1}.settings-panel{padding:16px}.settings-panel .advanced{margin:12px 0 0}.compose-actions{bottom:8px}.compose-actions strong{font-size:13px}#studio-generate{min-width:145px}.voice-welcome h2{font-size:22px}#voice-picker .voice-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:500px){.topbar-status{gap:0}.connection-status{font-size:12px}.compose-actions{padding:12px;gap:10px}#studio-generate{min-width:125px;font-size:14px;padding:12px}.compose-actions small{font-size:11px}#voice-picker{width:calc(100% - 16px);max-height:94dvh}#voice-picker .voice-browser{padding:14px}#voice-picker .voice-cards{grid-template-columns:1fr}.picker-title h2{font-size:18px}.voice-filters button{font-size:13px}.voice-choose>span{min-height:0}.preview-dock{bottom:90px}.connection-banner,.update-banner{padding:12px}.voice-categories{gap:5px}.voice-categories .ghost{padding:8px}.clip-range{gap:8px}}
+
+.picker-sticky{position:sticky;top:-1px;background:#fff;z-index:4;padding:10px 0 1px;margin-top:-10px}.picker-sticky .picker-current{margin:10px 0}.voice-cards{scroll-margin-top:120px}

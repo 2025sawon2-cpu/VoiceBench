@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
+from collections import OrderedDict
 import json
 import math
 import os
@@ -38,7 +40,7 @@ def generation_request(payload, embedding_npy):
 
 
 class ZonosBackend:
-    def __init__(self, model_path, binary, native_port=8791, backend="cuda"):
+    def __init__(self, model_path, binary, native_port=8791, backend="cuda", dac_device="cpu"):
         import socket
         # Never attach to or terminate an unrelated process occupying this port.
         with socket.socket() as probe:
@@ -47,6 +49,8 @@ class ZonosBackend:
         self.url = f"http://127.0.0.1:{native_port}"
         self.count = 0
         self.backend = backend
+        self.dac_device = dac_device
+        self.speaker_cache = OrderedDict()
         start = time.perf_counter()
         from zonos2_speaker import SpeakerEncoder
         runtime = Path(binary).resolve().parents[1]
@@ -71,7 +75,8 @@ class ZonosBackend:
             str(binary), "zonos2-q8_0.gguf",
             "--dac", "dac.gguf",
             "--host", "127.0.0.1", "--port", str(native_port),
-            "--gpu", "--dac-gpu", "--dac-threads", "1", "--batch", "1", "--max", "4096",
+            "--gpu", "--dac-gpu" if dac_device == "cuda" else "--dac-cpu",
+            "--dac-threads", "1", "--batch", "1", "--max", "4096",
         ], cwd=native_models, stdout=sys.stdout, stderr=subprocess.STDOUT, env=environment,
            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         try:
@@ -95,7 +100,17 @@ class ZonosBackend:
     def health(self):
         return {"status": "ready" if self.process.poll() is None else "failed",
                 "model": MODEL, "attention": self.backend, "quantization": "Q8_0",
+                "runtime_version": 2, "dac_device": self.dac_device,
                 "native_pid": self.process.pid, "request_count": self.count}
+
+    def speaker_embedding(self, reference):
+        key = hashlib.sha256(reference.read_bytes()).hexdigest()
+        if key not in self.speaker_cache:
+            self.speaker_cache[key] = self.speaker.encode(reference)
+            if len(self.speaker_cache) > 4:
+                self.speaker_cache.popitem(last=False)
+        self.speaker_cache.move_to_end(key)
+        return self.speaker_cache[key]
 
     def close(self):
         if self.process.poll() is None:
@@ -113,7 +128,7 @@ class ZonosBackend:
 
         validate_payload(payload)
         start = time.perf_counter()
-        body = generation_request(payload, self.speaker.encode(Path(payload["reference"])))
+        body = generation_request(payload, self.speaker_embedding(Path(payload["reference"])))
         request = urllib.request.Request(self.url + "/tts/generate",
             data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
             headers={"Content-Type": "application/json"})
@@ -133,6 +148,8 @@ class ZonosBackend:
         return {"model": MODEL, "model_path": str(self.path), "output": str(output),
                 "seed": body["seed"], "generation": settings, "backend": self.backend,
                 "quantization": "Q8_0", "sample_rate": rate, "audio_seconds": duration,
+                "runtime_version": 2, "dac_device": self.dac_device,
+                "speaker_cache_entries": len(self.speaker_cache),
                 "speaker_encoder": "official-ecapa-pytorch-fp32-cpu",
                 "load_seconds": self.load_seconds, "generate_seconds": elapsed,
                 "realtime_factor": elapsed / duration, "request_index": self.count}
@@ -145,5 +162,6 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8790)
     parser.add_argument("--native-port", type=int, default=8791)
     parser.add_argument("--backend", choices=("cuda", "vulkan"), default="cuda")
+    parser.add_argument("--dac-device", choices=("cpu", "cuda"), default="cpu")
     args = parser.parse_args()
-    serve(ZonosBackend(args.model_path, args.binary, args.native_port, args.backend), args.port)
+    serve(ZonosBackend(args.model_path, args.binary, args.native_port, args.backend, args.dac_device), args.port)

@@ -11,6 +11,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from .voices import catalog, public_catalog, controls, validate_generation, QWEN_CUSTOM, family, FAMILIES
+from .recordings import validate_voice_clip
 from .config import Paths
 from .db import Database
 from .util import atomic_write_bytes, json_dumps, sha256_file, system_snapshot, utc_now
@@ -40,7 +42,8 @@ DEFAULT_CORPUS = [
 ]
 
 STUDIO_DESCRIPTION = "VoiceBench personal TTS studio"
-STUDIO_ENGINE_SLUG = "qwen3-tts-17b-pascal-expressive"
+STUDIO_ENGINE_SLUG = "zonos2-q8-experimental"
+QWEN_EXPRESSIVE_SLUG = "qwen3-tts-17b-pascal-expressive"
 STUDIO_INPUT_POLICY = "single_segment_full_text_v1"
 STUDIO_DEFAULT_SEED = 13
 LONG_FORM_QUALITY_MODE = "long_form_hq"
@@ -282,6 +285,21 @@ def split_script(
     ]
 
 
+def supports_quality_control(slug: str) -> bool:
+    return slug.startswith(("qwen3-tts-", "zonos2-"))
+
+
+def plan_studio_script(text: str, engine_slug: str) -> list[SpeechSegment]:
+    # Keep Shorts in one model context. Long scripts retain bounded, semantic
+    # segments; this is not a promise of cross-segment acoustic continuity.
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    if engine_slug.startswith("zonos2-") and 0 < len(cleaned) <= 240:
+        role = _sentence_role(cleaned, opening=True)
+        return [SpeechSegment(cleaned, 1, len(_split_sentences(cleaned)), role, True,
+                              _base_pause_after(cleaned, role))]
+    return plan_script(text)
+
+
 def partition_studio_chapters(
     segments: list[dict[str, Any]],
     target_chars: int = LONG_FORM_CHAPTER_TARGET_CHARS,
@@ -340,7 +358,7 @@ class Service:
         )
 
     def state(self) -> dict[str, Any]:
-        projects = self.db.fetch_all("SELECT * FROM projects ORDER BY id DESC")
+        projects = self.db.fetch_all("SELECT * FROM projects WHERE description != 'voice-library:v1' AND description NOT LIKE 'voice-catalog:%' ORDER BY id DESC")
         engines = self.db.fetch_all("SELECT * FROM engines ORDER BY id")
         for engine in engines:
             engine["config"] = json.loads(engine.pop("config_json") or "{}")
@@ -376,7 +394,9 @@ class Service:
     def upload_reference(
         self, project_id: int, filename: str, content: bytes, reference_text: str = ""
     ) -> dict[str, Any]:
-        self.get_project(project_id)
+        existing = self.get_project(project_id)
+        if (existing["description"] == "voice-library:v1" or existing["description"].startswith("voice-catalog:")) and existing.get("reference_path"):
+            raise ValueError("보관함 목소리는 고정됩니다. 새 목소리로 등록하세요.")
         if not content:
             raise ValueError("빈 음성 파일입니다.")
         suffix = Path(filename).suffix.lower() or ".wav"
@@ -393,7 +413,9 @@ class Service:
         return self.get_project(project_id)
 
     def update_reference_text(self, project_id: int, reference_text: str) -> dict[str, Any]:
-        self.get_project(project_id)
+        existing = self.get_project(project_id)
+        if existing["description"] == "voice-library:v1" or existing["description"].startswith("voice-catalog:"):
+            raise ValueError("보관함 목소리는 고정됩니다. 새 목소리로 등록하세요.")
         self.db.execute(
             "UPDATE projects SET reference_text=?,updated_at=? WHERE id=?",
             (reference_text.strip(), utc_now(), project_id),
@@ -469,6 +491,8 @@ class Service:
         valid_ids = {row["id"] for row in valid}
         if valid_ids != set(engine_ids):
             raise ValueError("존재하지 않거나 비활성화된 엔진이 포함되어 있습니다.")
+        if any(json.loads(row.get("config_json") or "{}").get("reference_preset") for row in valid):
+            raise ValueError("기본 AI 음성 프리셋은 Studio에서 선택하세요. 벤치마크는 프로젝트의 레퍼런스를 사용합니다.")
         if not project.get("reference_text") and any(
             json.loads(row.get("config_json") or "{}").get("requires_reference_text")
             for row in valid
@@ -583,35 +607,45 @@ class Service:
             (project_id,),
         )
 
-    def ensure_studio_project(self) -> dict[str, Any]:
-        reference = self.paths.data / "prepared" / "ref_voice" / "selected_reference.wav"
-        transcript = reference.with_suffix(".txt")
-        if not reference.exists() or not transcript.exists():
+    def studio_reference(self, engine_slug: str) -> tuple[Path, str, str, str]:
+        engine = self.db.fetch_one("SELECT config_json FROM engines WHERE slug=?", (engine_slug,))
+        config = json.loads(engine["config_json"]) if engine else {}
+        if config.get("reference_preset") == "AmericanMale":
+            path = self.paths.root / ".runtime/engines/zonos2/python-source/default_voices/AmericanMale.mp3"
+            return path, "", "ZONOS2 기본 남성 · AmericanMale", STUDIO_DESCRIPTION + " AmericanMale"
+        path = self.paths.data / "prepared/ref_voice/selected_reference.wav"
+        transcript = path.with_suffix(".txt")
+        return (path, transcript.read_text(encoding="utf-8").strip() if transcript.exists() else "",
+                "내 목소리 · B 레퍼런스", STUDIO_DESCRIPTION)
+
+    def ensure_studio_project(self, engine_slug: str = STUDIO_ENGINE_SLUG) -> dict[str, Any]:
+        reference, reference_text, voice_name, description = self.studio_reference(engine_slug)
+        if not reference.exists():
             raise FileNotFoundError("선택된 기본 레퍼런스 음성 또는 대본이 없습니다.")
         project = self.db.fetch_one(
             "SELECT * FROM projects WHERE description=? ORDER BY id LIMIT 1",
-            (STUDIO_DESCRIPTION,),
+            (description,),
         )
         if not project:
-            project = self.create_project("내 목소리 TTS 스튜디오", STUDIO_DESCRIPTION)
+            project = self.create_project(voice_name, description)
         self.db.execute(
             """UPDATE projects SET reference_path=?,reference_sha256=?,reference_text=?,updated_at=?
                WHERE id=?""",
             (
                 str(reference.resolve()),
                 sha256_file(reference),
-                transcript.read_text(encoding="utf-8").strip(),
+                reference_text,
                 utc_now(),
                 project["id"],
             ),
         )
         return self.get_project(project["id"])
 
-    def preview_studio_script(self, text: str) -> dict[str, Any]:
+    def preview_studio_script(self, text: str, engine_slug: str = STUDIO_ENGINE_SLUG) -> dict[str, Any]:
         """Use the synthesis planner without creating projects, prompts or jobs."""
         if not isinstance(text, str):
             raise ValueError("대본은 문자열이어야 합니다.")
-        segments = plan_script(text)
+        segments = plan_studio_script(text, engine_slug)
         return {
             "segment_count": len(segments),
             "join_count": max(0, len(segments) - 1),
@@ -630,32 +664,65 @@ class Service:
         source: str = "studio",
         quality_mode: str = LONG_FORM_QUALITY_MODE,
         request_fingerprint: str | None = None,
+        voice_project_id: int | None = None,
+        voice_id: str | None = None,
+        generation: dict | None = None,
     ) -> dict[str, Any]:
+        selected_voice = None
+        if voice_id or generation:
+            if source != "studio":
+                raise ValueError("외부 요청은 목소리와 고급 설정을 변경할 수 없습니다.")
+        if voice_id:
+            if voice_project_id is not None:
+                raise ValueError("목소리는 하나만 선택하세요.")
+            selected_voice = self.catalog_voice(voice_id)
+            if not selected_voice["available"]:
+                raise ValueError("선택한 목소리의 모델 또는 참조 파일이 준비되지 않았습니다.")
+            if selected_voice["kind"] == "library":
+                voice_project_id = selected_voice["voice_project_id"]
+                if engine_slug == QWEN_CUSTOM:
+                    raise ValueError("Qwen 기본 화자 모델은 사용자 음성 복제를 지원하지 않습니다.")
+            elif engine_slug != selected_voice["engine_slug"]:
+                raise ValueError("선택한 목소리와 모델이 일치하지 않습니다.")
+        overrides = validate_generation(engine_slug, generation)
+        if selected_voice and selected_voice.get("speaker"):
+            overrides["speaker"] = selected_voice["speaker"]
+        if engine_slug == QWEN_CUSTOM and "speaker" not in overrides:
+            raise ValueError("Qwen 기본 목소리를 선택하세요.")
         normalized = text.strip()
         if not normalized:
             raise ValueError("합성할 대본을 입력하세요.")
-        speech_plan = plan_script(normalized)
+        speech_plan = plan_studio_script(normalized, engine_slug)
         if not speech_plan:
             raise ValueError("합성할 수 있는 문장이 없습니다.")
         if source not in {"studio", "external_api"}:
             raise ValueError("Unsupported Studio request source.")
         if quality_mode not in {"standard", LONG_FORM_QUALITY_MODE}:
             raise ValueError("Unsupported quality mode.")
-        project = self.ensure_studio_project()
         engine = self.db.fetch_one(
             "SELECT * FROM engines WHERE slug=? AND enabled=1", (engine_slug,)
         )
         if not engine:
             raise ValueError(f"사용 가능한 TTS 엔진이 없습니다: {engine_slug}")
+        if not 0 <= int(seed) <= 2147483647:
+            raise ValueError("Seed는 0부터 2147483647 사이여야 합니다.")
+        if voice_project_id is not None:
+            if source != "studio" or json.loads(engine["config_json"]).get("reference_preset"):
+                raise ValueError("이 요청에서는 사용자 목소리를 선택할 수 없습니다.")
+            project = self.library_voice(int(voice_project_id))
+        elif selected_voice and selected_voice["kind"] not in {"personal","library"}:
+            project = self.ensure_catalog_project(selected_voice)
+        else:
+            project = self.ensure_studio_project(engine_slug)
         now = utc_now()
         request_id = self.db.execute(
             """INSERT INTO studio_requests(
                    project_id,original_text,seed,source,quality_mode,request_fingerprint,
-                   status,created_at
-               ) VALUES(?,?,?,?,?,?,?,?)""",
+                   status,created_at,voice_id,generation_json
+               ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
             (
                 project["id"], normalized, int(seed), source, quality_mode,
-                request_fingerprint, "queued", now,
+                request_fingerprint, "queued", now, voice_id, json_dumps(overrides),
             ),
         )
         for position, segment in enumerate(speech_plan, start=1):
@@ -696,7 +763,8 @@ class Service:
         if not engine:
             raise ValueError(f"사용 가능한 TTS 엔진이 없습니다: {STUDIO_ENGINE_SLUG}")
         fingerprint_data = {
-            "version": 6,
+            "version": 7,
+            "segmentation_policy": "zonos_shorts_whole_240_v1",
             "input_policy": STUDIO_INPUT_POLICY,
             "text": normalized,
             "seed": STUDIO_DEFAULT_SEED,
@@ -874,6 +942,9 @@ class Service:
         )
         if not request:
             raise KeyError("TTS 요청을 찾을 수 없습니다.")
+        voice = self.db.fetch_one("SELECT name FROM projects WHERE id=?", (request["project_id"],))
+        request["voice_name"] = voice["name"] if voice else "목소리 정보 없음"
+        request["generation"] = json.loads(request.pop("generation_json", "{}") or "{}")
         request["segment_count"] = int(request["segment_count"] or 0)
         request["completed_segments"] = int(request["completed_segments"] or 0)
         request["failed_segments"] = int(request["failed_segments"] or 0)
@@ -907,7 +978,8 @@ class Service:
             (request_id,),
         )
         quality_control: dict[str, Any] = {
-            "enabled": request.get("quality_mode") == LONG_FORM_QUALITY_MODE,
+            "enabled": request.get("quality_mode") == LONG_FORM_QUALITY_MODE
+            and supports_quality_control(request.get("engine_slug") or ""),
             "checked_segments": 0,
             "regenerated_segments": 0,
             "fallback_selected_segments": 0,
@@ -922,6 +994,7 @@ class Service:
             "fallback_segments": 0,
             "reset_reason_counts": {},
         }
+        request["performance"] = {"processing_seconds": 0.0, "gpu_memory_pressure": False}
         for segment in segment_rows:
             if not segment.get("metrics_json"):
                 continue
@@ -929,6 +1002,12 @@ class Service:
                 metrics = json.loads(segment["metrics_json"])
             except (TypeError, json.JSONDecodeError):
                 continue
+            request["performance"]["processing_seconds"] += float(metrics.get("wall_seconds") or 0)
+            gpu = metrics.get("gpu") or {}
+            if float(gpu.get("memory_total_mb") or 0) > 0:
+                request["performance"]["gpu_memory_pressure"] |= (
+                    float(gpu.get("peak_memory_used_mb") or 0) / float(gpu["memory_total_mb"]) > 0.92
+                )
             context = metrics.get("continuity")
             if isinstance(context, dict):
                 continuity["recorded_segments"] += 1
@@ -1012,10 +1091,54 @@ class Service:
         )
         return request
 
+    def catalog_voice(self, voice_id: str) -> dict[str, Any]:
+        voice = next((v for v in catalog(self.paths, self.db) if v["id"] == voice_id), None)
+        if not voice:
+            raise ValueError("목소리 목록에서 사용할 수 없는 항목입니다.")
+        return voice
+
+    def voice_preview_path(self, voice_id: str) -> Path:
+        voice = self.catalog_voice(voice_id)
+        path = Path(voice["preview_path"])
+        if voice["preview_kind"] == "missing" or not path.is_file():
+            raise FileNotFoundError("준비된 미리듣기 파일이 없습니다.")
+        return path
+
+    def ensure_catalog_project(self, voice: dict) -> dict[str, Any]:
+        path = Path(voice["reference"])
+        digest = sha256_file(path) if path.is_file() and not voice.get("speaker") else None
+        # Snapshot by reference identity: replacing a gallery asset cannot alter queued jobs.
+        description = "voice-catalog:" + voice["id"] + ":" + (digest or "builtin")
+        project = self.db.fetch_one("SELECT * FROM projects WHERE description=? ORDER BY id LIMIT 1", (description,))
+        if not project:
+            project = self.create_project(voice["name"], description)
+            snapshot = path
+            if digest:
+                snapshot = self.paths.references / (digest + path.suffix)
+                if not snapshot.exists():
+                    shutil.copyfile(path, snapshot)
+            self.db.execute("UPDATE projects SET reference_path=?,reference_sha256=?,reference_text=? WHERE id=?",
+                            (str(snapshot), digest, voice["reference_text"], project["id"]))
+        return self.get_project(project["id"])
+
+    def library_voice(self, project_id: int) -> dict[str, Any]:
+        project = self.get_project(project_id)
+        if project["description"] != "voice-library:v1" or not Path(project.get("reference_path") or "").is_file():
+            raise ValueError("사용 가능한 보관함 목소리가 아닙니다.")
+        return project
+
+    def create_library_voice(self, name: str, transcript: str, content: bytes) -> dict[str, Any]:
+        if not name.strip() or len(name.strip()) > 80:
+            raise ValueError("목소리 이름을 1~80자로 입력하세요.")
+        if not transcript.strip():
+            raise ValueError("녹음에서 읽은 문장을 입력하세요.")
+        validate_voice_clip(content)
+        project = self.create_project(name.strip(), "voice-library:v1")
+        return self.upload_reference(project["id"], "reference.wav", content, transcript)
+
     def studio_state(self) -> dict[str, Any]:
-        reference = self.paths.data / "prepared" / "ref_voice" / "selected_reference.wav"
-        transcript = reference.with_suffix(".txt")
-        available = reference.exists() and transcript.exists()
+        reference, _, voice_name, _ = self.studio_reference(STUDIO_ENGINE_SLUG)
+        available = reference.exists()
         project = self.ensure_studio_project() if available else None
         engine = self.db.fetch_one(
             "SELECT id,slug,name,version,enabled FROM engines WHERE slug=?",
@@ -1027,16 +1150,30 @@ class Service:
                  slug='qwen3-tts-06b-pascal' OR slug LIKE 'qwen3-tts-17b-pascal%'
                  OR slug='chatterbox-multilingual-v3-experimental'
                  OR slug='voxcpm2-experimental'
-                 OR slug='voxcpm2-hq-experimental'
-                 OR slug IN ('fish-s2-pro-experimental', 'zonos2-q8-experimental')
+                 OR slug='voxcpm2-hq-experimental' OR slug='qwen3-tts-17b-custom-voice'
+                 OR slug IN ('fish-s2-pro-experimental', 'zonos2-q8-experimental', 'zonos2-q8-american-male')
                  OR slug IN ('voxcpm2-experimental-bright', 'voxcpm2-experimental-energetic')
                )
                ORDER BY CASE slug
+                 WHEN 'zonos2-q8-experimental' THEN -2
+                 WHEN 'zonos2-q8-american-male' THEN -1
                  WHEN 'qwen3-tts-17b-pascal-expressive' THEN 0
                  WHEN 'qwen3-tts-17b-pascal' THEN 1
                  WHEN 'qwen3-tts-17b-pascal-stable' THEN 2
                  ELSE 3 END"""
         )
+        for item in studio_engines:
+            voice_path, _, item["voice_name"], _ = self.studio_reference(item["slug"])
+            item["available"] = voice_path.is_file()
+            item["quality_control_supported"] = supports_quality_control(item["slug"])
+            config = self.db.fetch_one("SELECT config_json FROM engines WHERE id=?", (item["id"],))
+            settings = json.loads(config["config_json"])
+            item["model_label"] = FAMILIES.get(family(item["slug"]), (item["name"],))[0]
+            item["fixed_voice"] = bool(settings.get("reference_preset")) or item["slug"] == QWEN_CUSTOM
+            item["custom_controls"] = [dict(key=key,label=v[0],minimum=v[1],maximum=v[2],step=v[3],default=settings.get("generation",{}).get(key)) for key,v in controls(item["slug"]).items()]
+            item["instruction_supported"] = item["slug"] == QWEN_CUSTOM
+            if item["slug"] == QWEN_CUSTOM:
+                item["available"] = True
         requests = self.db.fetch_all(
             "SELECT id FROM studio_requests ORDER BY id DESC LIMIT 50"
         )
@@ -1047,13 +1184,19 @@ class Service:
         return {
             "available": available and bool(studio_engines),
             "voice": {
-                "name": "내 목소리 · B 레퍼런스",
-                "duration_seconds": 9.95,
+                "name": voice_name,
                 "reference_path": str(reference) if available else None,
             },
             "engine": engine,
             "default_engine_slug": STUDIO_ENGINE_SLUG,
             "studio_engines": studio_engines,
+            "voice_catalog": public_catalog(self.paths, self.db),
+            "voices": [
+                {"id": p["id"], "name": p["name"], "transcript": p["reference_text"],
+                 "available": Path(p.get("reference_path") or "").is_file(),
+                 "audio_url": f"/api/voices/{p['id']}/audio"}
+                for p in self.db.fetch_all("SELECT * FROM projects WHERE description='voice-library:v1' ORDER BY id DESC")
+            ],
             "project_id": project["id"] if project else None,
             "processing_request_id": processing["request_id"] if processing else None,
             "requests": [self.studio_request(row["id"]) for row in requests],

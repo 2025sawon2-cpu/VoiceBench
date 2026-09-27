@@ -20,8 +20,9 @@ from .quality import (
 )
 from .service import (
     LONG_FORM_QUALITY_MODE,
-    STUDIO_ENGINE_SLUG,
     STUDIO_INPUT_POLICY,
+    QWEN_EXPRESSIVE_SLUG,
+    supports_quality_control,
     partition_studio_chapters,
 )
 from .util import json_dumps, sha256_file, system_snapshot, utc_now
@@ -45,6 +46,7 @@ class JobRunner(threading.Thread):
                 """SELECT j.*,p.normalized_text,p.original_text,e.slug,e.name,e.kind,e.version,e.config_json,
                           pr.reference_path,pr.reference_sha256,pr.reference_text,
                           sr.id AS studio_request_id,sr.quality_mode AS studio_quality_mode,
+                          sr.generation_json AS studio_generation_json,
                           (SELECT COUNT(*) FROM studio_segments total
                            WHERE total.request_id=sr.id) AS request_segment_count,
                           ss.position AS segment_position,ss.paragraph_index,ss.semantic_role
@@ -86,7 +88,7 @@ class JobRunner(threading.Thread):
             job.get("studio_request_id")
             and job.get("studio_quality_mode") == LONG_FORM_QUALITY_MODE
             and job.get("kind") == "command"
-            and str(job.get("slug", "")).startswith("qwen3-tts-")
+            and supports_quality_control(str(job.get("slug", "")))
         )
 
     def _request_cancelled(self, job: dict) -> bool:
@@ -104,10 +106,11 @@ class JobRunner(threading.Thread):
         Work on a copy so the preset and continuity compatibility stay intact.
         """
         config = json.loads(job["config_json"] or "{}")
-        generation = config.get("generation", {})
+        generation = {**config.get("generation", {}), **json.loads(job.get("studio_generation_json") or "{}")}
+        config["generation"] = generation
         apply_full_text = bool(
             self._quality_control_enabled(job)
-            and job.get("slug") == STUDIO_ENGINE_SLUG
+            and job.get("slug") == QWEN_EXPRESSIVE_SLUG
             and job.get("request_segment_count") == 1
             and config.get("worker")
             and "non_streaming_mode" not in generation
@@ -116,7 +119,9 @@ class JobRunner(threading.Thread):
             generation = {**generation, "non_streaming_mode": True}
             config["generation"] = generation
         synthesis = {
-            "input_policy": STUDIO_INPUT_POLICY if apply_full_text else "engine_config",
+            "input_policy": (STUDIO_INPUT_POLICY if apply_full_text else
+                             "zonos_shorts_whole_240_v1" if str(job.get("slug", "")).startswith("zonos2-")
+                             and job.get("request_segment_count") == 1 else "engine_config"),
             "request_segment_count": job.get("request_segment_count"),
             "generation": generation,
         }
@@ -286,6 +291,18 @@ class JobRunner(threading.Thread):
             if not safe_candidates:
                 raise RuntimeError("문맥 연결 검증이 중단되었습니다.")
             selected = choose_best_candidate(safe_candidates)
+            if quality_enabled and job["slug"].startswith("zonos2-") and (
+                selected["quality"].get("retry_recommended")
+                or selected["quality"].get("transcription") is None
+            ):
+                # Do not deliver an unverified/failed ZONOS take as a success.
+                # Retain diagnostics and attempts for investigation, not playback.
+                report = output_dir / f"job-{job['id']}-quality-failed.json"
+                report.write_text(json_dumps([
+                    {"seed": c["seed"], "path": str(c["path"]), "quality": c["quality"]}
+                    for c in candidates
+                ]), encoding="utf-8")
+                raise RuntimeError("ZONOS2 음성 검사를 통과하지 못했습니다. 검사 환경 또는 실패 기록을 확인하세요.")
             selected_seed = int(selected["seed"])
             selected_output_path = output_dir / (
                 f"job-{job['id']}-{job['slug']}-seed-{selected_seed}.wav"
@@ -301,6 +318,13 @@ class JobRunner(threading.Thread):
             metrics = inspect_wav(output_path)
             metrics["wall_seconds"] = round(time.perf_counter() - started, 4)
             metrics["gpu"] = sampler.summary()
+            if before.get("gpu"):
+                metrics["gpu"]["memory_total_mb"] = float(before["gpu"].get("memory_total_mb") or 0)
+            performance = adapter_result.get("worker", {})
+            metrics["engine_performance"] = {
+                key: performance[key] for key in ("generate_seconds", "realtime_factor", "dac_device")
+                if key in performance
+            }
             metrics["synthesis"] = synthesis
             quality_attempts = []
             for candidate in candidates:

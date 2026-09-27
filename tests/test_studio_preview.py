@@ -51,7 +51,7 @@ class StudioPreviewTests(unittest.TestCase):
         reference.with_suffix(".txt").write_text("reference", encoding="utf-8")
         for text in (SAMPLE, SAMPLE + "\n\n" + SAMPLE, "정말 그럴까요? " + SAMPLE + " 하지만 아직 끝이 아닙니다."):
             with self.subTest(text=text):
-                preview = self.service.preview_studio_script(text)
+                preview = self.service.preview_studio_script(text, engine_slug="mock-a")
                 created = self.service.create_studio_request(text, engine_slug="mock-a")
                 rows = self.db.fetch_all(
                     "SELECT position,text,paragraph_index,semantic_role,pause_after_ms FROM studio_segments WHERE request_id=? ORDER BY position",

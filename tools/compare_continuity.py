@@ -27,7 +27,7 @@ from tools.compare_prosody import boundary_metrics, eligible_context
 from voicebench.audio import concatenate_wavs, inspect_wav
 from voicebench.continuity import group_for_continuity
 from voicebench.quality import WhisperQualityVerifier, normalize_for_quality
-from voicebench.service import STUDIO_DEFAULT_SEED, STUDIO_ENGINE_SLUG, plan_script
+from voicebench.service import STUDIO_DEFAULT_SEED, QWEN_EXPRESSIVE_SLUG, plan_script
 from voicebench.util import sha256_file
 
 
@@ -130,7 +130,7 @@ def main() -> None:
     with sqlite3.connect(f"{(ROOT / 'data/voicebench.sqlite3').as_uri()}?mode=ro", uri=True) as db:
         if not args.analyze_only and db.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','running')").fetchone()[0]:
             raise SystemExit("Wait for the production queue to become idle")
-        row = db.execute("SELECT config_json FROM engines WHERE slug=?", (STUDIO_ENGINE_SLUG,)).fetchone()
+        row = db.execute("SELECT config_json FROM engines WHERE slug=?", (QWEN_EXPRESSIVE_SLUG,)).fetchone()
     if not row:
         raise SystemExit("Production Qwen engine is not registered")
     config = json.loads(row[0])

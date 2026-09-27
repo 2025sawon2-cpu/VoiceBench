@@ -12,7 +12,7 @@ from voicebench.config import Paths
 from voicebench.db import Database
 from voicebench.engines import EngineError, EngineRequest, run_engine
 from voicebench.runner import JobRunner
-from voicebench.service import STUDIO_ENGINE_SLUG, STUDIO_INPUT_POLICY, Service, SpeechSegment
+from voicebench.service import QWEN_EXPRESSIVE_SLUG as STUDIO_ENGINE_SLUG, STUDIO_INPUT_POLICY, Service, SpeechSegment
 
 
 class ContinuityRunnerTests(unittest.TestCase):
@@ -35,6 +35,8 @@ class ContinuityRunnerTests(unittest.TestCase):
                 "generation": {"temperature": 1.0, "top_p": 0.95},
             },
         })
+        config = json.loads(self.db.fetch_one("SELECT config_json FROM engines WHERE slug=?", (STUDIO_ENGINE_SLUG,))["config_json"])
+        self.service.upsert_engine({"slug":"zonos2-q8-experimental", "name":"Zonos", "kind":"command", "config":config})
         register_continuity_variant(self.paths, self.db)
         self.runner = JobRunner(self.paths, self.db)
         self.calls = []
@@ -206,8 +208,8 @@ class ContinuityRunnerTests(unittest.TestCase):
 
     def test_single_generation_web_and_external_use_selected_full_text_mode(self):
         text = "오늘은 평소보다 조금 천천히 걸어 보았어요. 익숙한 길에서도 새로운 풍경을 발견했거든요."
-        self.service.create_studio_request(text)
-        self.service.create_external_tts_request(text)
+        self.service.create_studio_request(text, engine_slug=STUDIO_ENGINE_SLUG)
+        self.service.create_studio_request(text, engine_slug=STUDIO_ENGINE_SLUG, source="external_api")
         original = self.db.fetch_one("SELECT config_json FROM engines WHERE slug=?", (STUDIO_ENGINE_SLUG,))["config_json"]
         payloads = []
 

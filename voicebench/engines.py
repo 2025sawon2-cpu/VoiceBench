@@ -69,12 +69,14 @@ def _worker_matches(
     health: dict[str, Any] | None,
     expected_model: str | None,
     expected_attention: str | None,
+    expected_runtime: int | None = None,
 ) -> bool:
     if not health or health.get("status") != "ready":
         return False
     return (
         (not expected_model or health.get("model") == expected_model)
         and (not expected_attention or health.get("attention") == expected_attention)
+        and (expected_runtime is None or health.get("runtime_version") == expected_runtime)
     )
 
 
@@ -84,11 +86,12 @@ def _ensure_worker(config: dict[str, Any], environment: dict[str, str]) -> None:
     health_url = str(worker["health_url"])
     expected_model = worker.get("model")
     expected_attention = worker.get("attention")
-    if _worker_matches(_worker_health(health_url), expected_model, expected_attention):
+    expected_runtime = worker.get("runtime_version")
+    if _worker_matches(_worker_health(health_url), expected_model, expected_attention, expected_runtime):
         return
     with _worker_lock:
         health = _worker_health(health_url)
-        if _worker_matches(health, expected_model, expected_attention):
+        if _worker_matches(health, expected_model, expected_attention, expected_runtime):
             return
         previous = _workers.get(endpoint)
         if health and health.get("status") == "ready":
@@ -100,8 +103,13 @@ def _ensure_worker(config: dict[str, Any], environment: dict[str, str]) -> None:
             while time.time() < deadline and _worker_health(health_url):
                 time.sleep(0.25)
         if previous and previous.process.poll() is None:
-            previous.process.terminate()
-            previous.process.wait(timeout=10)
+            # HTTP shutdown closes the socket before backend cleanup finishes.
+            # Give the wrapper time to reap its owned native child first.
+            try:
+                previous.process.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                previous.process.terminate()
+                previous.process.wait(timeout=10)
         if previous and not previous.log_stream.closed:
             previous.log_stream.close()
         replacements = {"parent_pid": str(os.getpid())}
@@ -125,7 +133,7 @@ def _ensure_worker(config: dict[str, Any], environment: dict[str, str]) -> None:
         _workers[endpoint] = handle
         deadline = time.time() + float(worker.get("startup_timeout_seconds", 240))
         while time.time() < deadline:
-            if _worker_matches(_worker_health(health_url), expected_model, expected_attention):
+            if _worker_matches(_worker_health(health_url), expected_model, expected_attention, expected_runtime):
                 return
             if process.poll() is not None:
                 log_stream.flush()

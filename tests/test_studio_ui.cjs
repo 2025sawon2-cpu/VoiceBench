@@ -25,6 +25,7 @@ function fixture() {
           return enabled;
         },
       },
+      dispatchEvent(event) { this["on" + event.type]?.({target: this}); },
       replaceChildren(...items) { this.children = items; },
     };
   }
@@ -35,7 +36,7 @@ function fixture() {
   }
   const context = vm.createContext({
     document: {querySelector: node, querySelectorAll: () => [], createElement: element},
-    AbortController,
+    AbortController, AbortSignal, Event,
     setTimeout: fn => { const id = ++nextTimer; timers.set(id, fn); return id; },
     clearTimeout: id => timers.delete(id),
     fetch: (url, options) => new Promise((resolve, reject) => {
@@ -45,7 +46,7 @@ function fixture() {
     }),
   });
   const source = fs.readFileSync(path.join(staticRoot, 'app.js'), 'utf8');
-  const startup = 'loadState().catch(error => flash(error.message, true));';
+  const startup = source.trim().split('\n').at(-1);
   assert.equal(source.split(startup).length, 2);
   vm.runInContext(source.replace(startup, ''), context);
   function input(text) { node('#studio-text').value = text; node('#studio-text').oninput({target: node('#studio-text')}); }
@@ -126,4 +127,54 @@ test('switching between Qwen and Fish preserves model-specific quality guidance'
   f.node('#studio-engine').value = 'missing';
   f.node('#studio-engine').onchange();
   assert.equal(f.node('#studio-generate').disabled, true);
+});
+
+test('changing the model refreshes boundaries and ignores the old preview', async () => {
+  const f = fixture();
+  vm.runInContext("app.studio = {available:true,studio_engines:[{slug:'zonos2-q8-experimental',name:'ZONOS2',voice_name:'Personal',quality_control_supported:true},{slug:'qwen3-tts-17b-pascal-expressive',name:'Qwen'}]}", f.context);
+  f.node('#studio-engine').value = 'qwen3-tts-17b-pascal-expressive';
+  f.input('테스트 대본');
+  const old = f.fireTimer();
+  f.node('#studio-engine').value = 'zonos2-q8-experimental';
+  f.node('#studio-engine').onchange();
+  assert.equal(f.node('#studio-voice-name').textContent, 'Personal');
+  assert.equal(f.node('#studio-engine-state').textContent, 'ZONOS2 · 자동 발음·파형 검사');
+  const latest = f.fireTimer();
+  assert.equal(JSON.parse(f.requests[1].options.body).engine_slug, 'zonos2-q8-experimental');
+  f.requests[1].reply({segment_count:1,join_count:0,segments:[{text:'테스트 대본'}]});
+  await latest;
+  f.requests[0].reply({segment_count:2,join_count:1,segments:[{text:'테스트'},{text:'대본'}]});
+  await old;
+  assert.equal(f.node('#studio-segment-estimate').textContent, '한 번에 생성 · 구간 연결 없음');
+});
+
+test('submission sends the selected voice and quality without deleting the draft; duplicate click is ignored', async () => {
+  const f = fixture();
+  vm.runInContext(`app.studio = {available:true,studio_engines:[{slug:'zonos2-q8-experimental',name:'ZONOS2',available:true}],voices:[{id:8,name:'New voice',available:true}]}; loadStudio = async () => {};`, f.context);
+  f.node('#studio-text').value = 'Keep this draft.';
+  f.node('#studio-engine').value = 'zonos2-q8-experimental';
+  f.node('#studio-voice').value = '8';
+  f.node('#studio-quality').value = 'standard';
+  f.node('#studio-seed').value = '42';
+  const pending = f.node('#studio-form').onsubmit({preventDefault(){}});
+  await f.node('#studio-form').onsubmit({preventDefault(){}});
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests[0].url, '/api/studio/synthesize');
+  assert.deepEqual(JSON.parse(f.requests[0].options.body), {text:'Keep this draft.', seed:42, engine_slug:'zonos2-q8-experimental',quality_mode:'standard',voice_project_id:8});
+  f.requests[0].reply({id:1}); await pending;
+  assert.equal(f.node('#studio-text').value, 'Keep this draft.');
+  assert.equal(f.node('#studio-generate').disabled, false);
+});
+
+test('default voice sends no override and uses HQ by default', async () => {
+  const f = fixture();
+  vm.runInContext(`app.studio = {available:true,studio_engines:[{slug:'zonos2-q8-experimental',name:'ZONOS2',available:true}],voices:[]}; loadStudio = async () => {};`, f.context);
+  f.node('#studio-text').value = 'Default voice.';
+  f.node('#studio-engine').value = 'zonos2-q8-experimental';
+  const pending = f.node('#studio-form').onsubmit({preventDefault(){}});
+  const payload = JSON.parse(f.requests[0].options.body);
+  assert.equal(payload.voice_project_id, undefined);
+  assert.equal(payload.seed, 13);
+  assert.equal(payload.quality_mode, 'long_form_hq');
+  f.requests[0].reply({id:1}); await pending;
 });

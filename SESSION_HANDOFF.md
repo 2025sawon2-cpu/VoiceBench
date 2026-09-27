@@ -8,13 +8,13 @@ This file is the starting point for the next Codex session. Read it before makin
 
 Run the best practical local voice-cloning TTS service on the owner's PC, using the owner's fixed reference voice. The web UI and LAN MCP/API should produce the same speech when the script, engine, seed, and quality mode are identical.
 
-Latest owner feedback: after selecting story A, the owner also said “설명형 대화형 둘다 a가 더 좋아.” All three tested scripts now favor A = `full_text` (`non_streaming_mode=True`) in the **input-mode A/B** experiment, `data/comparisons/shorts-input-mode-20260925/listen.html`. These labels are unrelated to sampling A–D or continuity C. Explanation/conversation were delivered as lossless inline chat players, with source WAV hashes and decoded PCM checked. The September 25 missing-feedback audit below is historical. Keep the already implemented single-generation full-text policy; no further code change or server restart was needed for this feedback.
+Historical Qwen feedback (before the ZONOS2 promotion): after selecting story A, the owner also said “설명형 대화형 둘다 a가 더 좋아.” All three tested scripts now favor A = `full_text` (`non_streaming_mode=True`) in the **input-mode A/B** experiment, `data/comparisons/shorts-input-mode-20260925/listen.html`. These labels are unrelated to sampling A–D or continuity C. Explanation/conversation were delivered as lossless inline chat players, with source WAV hashes and decoded PCM checked. The September 25 missing-feedback audit below is historical. Keep the already implemented single-generation full-text policy; no further code change or server restart was needed for this feedback.
 
 ## Current operating state
 
 - Workspace: `C:\Users\s98se\OneDrive\Pictures\Documents\ChatGPT\인스타_자동화\VoiceBench`
 - Local URL: `http://127.0.0.1:8765`; LAN hosting remains offline.
-- After the September 26 push/restart, port 8765 is owned by PID 78012 and the Qwen model worker on 8790 by PID 81432. Both run the merged code. Studio request 23 succeeded with the new single-segment full-text policy; the queue is empty.
+- After the ZONOS2 promotion restart, local server PID 69592 owns 8765; ZONOS2 wrapper PID 81136 owns 8790 and native child PID 71280 owns 8791. These IDs are historical hints: check live state before stopping anything. The latest request/result is documented in docs/zonos-production-20260926.md.
 - Runtime credentials remain private; use the authenticated hosting script for LAN operation. `.runtime/hosting-session.json` records this machine's local server.
 - The remote September 26 startup/#76 evidence below comes from another checkout (`C:\Users\alseo\Documents\Voice`, GTX 1070 Ti, original launch PID 30448). Its process IDs, data files and runtime state must not be assumed to exist here.
 - The old ngrok public URL is intentionally offline.
@@ -41,17 +41,18 @@ If the Qwen worker remains on port 8790 after stopping, send `POST {}` to `http:
 - Reference WAV: `data\prepared\ref_voice\selected_reference.wav`
 - Reference transcript: `data\prepared\ref_voice\selected_reference.txt`
 - Selected reference: B, about 9.95 seconds
-- Default engine slug: `qwen3-tts-17b-pascal-expressive`
-- Display preset: `Qwen3-TTS 1.7B · 표현형 T1.0/P0.95`
+- Default engine slug: `zonos2-q8-experimental` (ZONOS2 Q8/CUDA; owner confirmed the existing personal reference)
+- Display preset: `ZONOS2 · 내 목소리 · 기본`; T0.9/P0.95/minP0.05; emotion off; DAC on CPU to reduce GPU memory
 - Default/fixed Seed: `13`
 - Default mode: `long_form_hq`
-- Default expressive HQ requests with exactly one actual generation segment now use `non_streaming_mode=True`, selected from story A. Multi-segment requests retain the original input mode even when only one queued job remains. Explicit engine input-mode settings, comparison engines, standard mode and benchmarks are preserved.
-- Hardware: RTX 4070 Ti SUPER 16 GB; the 1.7B worker runs FP16/SDPA.
+- ZONOS2 scripts up to 240 whitespace-normalized characters generate as one segment. Longer scripts keep the bounded semantic planner.
+- Optional Qwen expressive HQ requests with exactly one actual generation segment use `non_streaming_mode=True`, selected from story A. Multi-segment requests retain the original input mode even when only one queued job remains. Explicit engine input-mode settings, comparison engines, standard mode and benchmarks are preserved.
+- Hardware: RTX 4070 Ti SUPER 16 GB. Default ZONOS2 uses Q8/CUDA and CPU DAC; Qwen remains FP16/SDPA when selected. Another project currently holds about 5.1GiB of GPU memory. Do not terminate other projects to improve this service.
 - Latest VoxCPM2 preference: no emotional/style instructions. User rejected even the reduced "20%" attempt as too agitated; both Shorts presets are disabled. Use the original reference-audio-plus-transcript continuation preset (`voxcpm2-experimental`, CFG 2.0/10 steps). Do not re-enable emotion presets without a new user request.
 
 Registered Qwen engines:
 
-- `qwen3-tts-17b-pascal-expressive`: T1.0/P0.95, current default
+- `qwen3-tts-17b-pascal-expressive`: T1.0/P0.95, retained comparison/fallback
 - `qwen3-tts-17b-pascal`: official-like T0.9/P1.0
 - `qwen3-tts-17b-pascal-stable`: T0.75/P0.90
 - `qwen3-tts-06b-pascal`: older 0.6B comparison engine
@@ -62,10 +63,10 @@ Registered Qwen engines:
 The web Studio default and external MCP/API both call `Service.create_studio_request` and therefore use the same:
 
 - reference audio and transcript;
-- Qwen 1.7B expressive engine;
+- ZONOS2 Q8/CUDA engine;
 - Seed 13 as the primary candidate (server-controlled QA fallbacks only after a detected failure);
-- semantic speech planning and approximately 180-character sentence-first segments;
-- the selected full-text input policy for exactly one generation segment in default expressive HQ;
+- one whole generation up to 240 characters, otherwise semantic planning with approximately 180-character sentence-first segments;
+- no Qwen-only generation arguments sent to ZONOS2;
 - long-form HQ chapter grouping and final WAV concatenation.
 
 For a script around 10 minutes, both paths should sound the same when the input text is exactly the same, including punctuation. The request source (`studio` or `external_api`) is metadata only. CUDA does not provide a mathematical guarantee that independently generated WAV files will always be byte-for-byte identical, although the RNG is reseeded for each segment and listening results should be equivalent on this PC.
@@ -95,7 +96,7 @@ MCP setup guide: `docs\claude-lan-mcp.md`
 - Segments are grouped into chapters targeting about 1,800 characters, with a 900-character minimum for a trailing chapter.
 - Speech planning classifies opening, question, transition, conclusion, exclamation, and statement units without rewriting the user's words. It keeps questions with their setup when practical, starts a new breath before substantial transition phrases, preserves paragraph metadata, and prefers paragraph boundaries for chapter cuts.
 - Planned total boundary pauses are 420ms for ordinary paragraph ends, 500ms after question paragraphs, 450ms after exclamation paragraphs, and at least 460ms before transition/conclusion units. Existing generated edge silence is measured before adding only the missing amount.
-- Every Qwen long-form HQ segment is checked locally by a persistent CPU-only Whisper Base worker. The normal first candidate remains Seed 13. Only high-confidence omissions, repetitions, invalid waveforms, or implausible durations trigger server-controlled fallback candidates (Seed 10, then 42), and the lowest-risk candidate is promoted.
+- Every ZONOS2 and Qwen long-form HQ segment is checked locally by a persistent CPU-only Whisper Base worker. The normal first candidate remains Seed 13. Only high-confidence omissions, repetitions, invalid waveforms, or implausible durations trigger server-controlled fallback candidates (Seed 10, then 42), and the lowest-risk candidate is promoted.
 - Studio/API responses expose aggregate `quality_control` counts. Per-run metrics and manifests retain every attempt's transcript, score, reason, and the actually selected Seed. External callers still cannot choose a Seed.
 - Each completed chapter is written to `data\artifacts\studio\request-{id}-chapter-{NN}.wav`.
 - The final combined file is `data\artifacts\studio\request-{id}.wav`.
@@ -130,7 +131,7 @@ External limits:
 
 ## Verification
 
-The merged September 26 regression passed 64 Python tests and 5 Node UI tests.
+The ZONOS2 promotion regression passed 72 Python tests and 6 Node UI tests.
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
@@ -389,3 +390,57 @@ The 1.7B engines, Seed 13 defaults, LAN/MCP integration, queue/cancellation fixe
 - Preserved loopback binding, existing web access behavior and the existing external Bearer key. Authenticated `/v1/health` returns 200. No credential rotation or LAN/tunnel startup occurred.
 - Fresh Studio request 23 / job 56 / run 53 used the selected personal reference, default Qwen 1.7B FP16/SDPA, HQ and Seed 13. It generated 5.36 seconds of audio; Whisper QA passed on the first attempt with CER 0, no fallback and no clipping. This is a functional smoke test, not a subjective quality comparison.
 - Both run metrics and the new worker response confirm `non_streaming_mode=True`; metrics record `single_segment_full_text_v1` and request segment count 1. Audio is local at `data/artifacts/studio/request-23.wav`. All credentials, generated audio and runtime files remain Git-ignored. The optional continuity preset remains unregistered locally.
+
+
+## 2026-09-26 ZONOS2 production promotion
+
+- Owner explicitly selected ZONOS2 as default and confirmed **existing personal voice cloning**, not AmericanMale. Web and external API now use engine 62 / `zonos2-q8-experimental`, original B reference, Seed 13 and HQ. AmericanMale is an optional separate Studio preset (engine 98), never the external default.
+- Short ZONOS2 scripts (up to 240 normalized characters) now synthesize in one request. The previous Adidas sample had been split into two segments and switched to Seed 13 versus benchmark Seeds 10/42/2026; those were different conditions. Preserve original comparison WAVs and settings when asked to reproduce a preferred take.
+- Added ZONOS2 automatic Whisper QA, bounded Seed retries and failure if all candidates fail or ASR is unavailable. Benchmarks keep requested Seeds. Full details and performance limitations: `docs/zonos-production-20260926.md`.
+- Worker now uses explicit `--dac-cpu`, one decoder lane, content-hashed bounded speaker cache and runtime version 2. Removing `--dac-gpu` alone does NOT select CPU in upstream; `--dac-threads` controls decoder instances, not CPU thread count. Initial test requests 27/28 were cancelled after detecting this; native logs confirm CPU for subsequent 29/30.
+- Process memory was reduced by roughly 627MiB, but same-script AmericanMale synthesis remained about 151 seconds. No speedup claim. Another project's GPU model is still resident; do not stop it without authorization. No Q8 weight downgrade.
+- Short requests 29 (personal) and 30 (AmericanMale) passed first-attempt Seed 13 QA. Request 31 exercises external API multi-segment behavior. Local validation manifests and equal-RMS copies of the original six Qwen/ZONOS2 Seed comparisons are under `data/artifacts/zonos-production-review/`.
+- Changes are local and uncommitted; the current task requests implementation/report, not a new push. Existing server credentials and loopback binding are preserved.
+
+- Final validation #31 succeeded: 37.3708s, two segments, Seed 13 on both, first-attempt QA passed (CER 0.0442/0.0), 365.008s processing. All three validation downloads matched hashes; personal reference hashes matched. Queue empty. Server PID69592 and worker PID81136/native71280 remained ready.
+
+## 2026-09-26 standalone Studio UI completed
+
+- User asked to make VoiceBench independently usable with a UI, referencing debpalash/VoiceStudio and other OSS. Implemented a local standalone UI in the existing Python/static web stack. Reference sources and scope: `docs/standalone-studio.md`. No upstream source/assets/dependencies copied; UI workflow inspiration only.
+- Launch via `Start-Studio.cmd` -> `tools/start_studio.py`, reuse existing port 8765 server, otherwise start hidden local-only server and preserve saved external key. No other workspace modified.
+- Seven views: create, voice library, history, benchmark, blind comparison, engine management, API/MCP connection guidance. TXT import/export, browser draft autosave, reuse history with model/seed/quality/voice, full script expansion, search/status filters, periodic queue refresh, WAV/chapter output and cancel preserved.
+- New library voices use projects description `voice-library:v1`, immutable after upload. Web synthesis accepts `voice_project_id`; external API remains fixed default reference/ZONOS2/Seed13/HQ. Preset AmericanMale rejects custom voice. WAV input validates 3–30s PCM16 mono/stereo and full frames; maximum HTTP upload 12MB. Library projects excluded from benchmark project picker.
+- Existing personal reference registered through actual browser UI as library project 6, name `내 목소리 · 원본 녹음`, using the existing selected_reference.wav and transcript. This is an additional usable library entry, not a change to the default reference.
+- Actual UI synthesis request #32 succeeded: 3.959s, 44.1kHz mono WAV, Seed13, first HQ attempt, no QA retries, processing 46.3s. Sample text: `안녕하세요. 새 음성 작업실에서 만든 테스트입니다.` Audio GET and WAV parsing verified.
+- Final regression: 75 Python tests and 8 Node UI tests pass, JS syntax valid, git diff --check passes. Browser verified upload, selection, search, reuse, official voice lock, and narrow layout with no horizontal overflow (client/scroll width 375px).
+- Codex in-app browser crashed once when attempting native audio playback after responsive viewport testing. Tab was recreated successfully; direct audio-tab navigation was blocked by the browser tool. Audio generation/download/WAV integrity passed, but browser playback itself was not verified. Launcher opens the user's normal default browser. Do not claim a verified cause for the in-app crash.
+- Live server restarted with final code and saved external Bearer key preserved, /v1/health 200. Current PID is recorded in `.runtime/hosting-session.json`; worker stays warm. No commit or push performed. All prior ZONOS2 task changes remain dirty and preserved.
+
+
+## 2026-09-27 목소리 갤러리 작업
+
+- 사용자 피드백: 기존 UI가 실제 기본 음성/즉시 미리듣기 없이 기술 프리셋에 치우쳐 있음. VoiceStudio sparse clone의 실제 소스를 검토하고 목소리 중심 UI로 수정. 상세 비교는 `docs/voicestudio-benchmark-20260927.md`.
+- Voice identity는 `voicebench/voices.py`, UI는 `gallery.js/css`. 공식 ZONOS2 참조 3개, Qwen CustomVoice 내장 9명, 공용 남녀 8개(Qwen Base/VoxCPM2/Fish/Chatterbox 각각 2), 본인 목소리 5엔진과 보관함 항목을 구분.
+- Qwen CustomVoice 1.7B 4.52GB 설치, pinned revision `0c0e3051f131929182e2c023b9537f8b1c68adfe`. `.runtime/engines/qwen3-tts/custom-voice.json`에 로컬 snapshot 기록. `tools/register_voice_gallery.py --download`로 재현. 심볼릭 링크 권한 없이 일반 파일 다운로드.
+- 기존 Qwen Base는 clone 경로, CustomVoice는 speaker 기반 `generate_custom_voice`로 분리. worker runtime_version=3. Base 프리셋/외부 ZONOS2 기본값은 변경하지 않음.
+- 웹 합성 요청 `voice_id`, `generation` 추가. DB 마이그레이션으로 요청에 저장하고 runner가 복사한 설정에 병합. 공식/공용 레퍼런스는 불변 콘텐츠 해시 사본. 고급 설정의 unsupported/NaN/bool/범위/정수 여부 서버 검증, 외부 API 오버라이드 차단.
+- `GET /api/voice-catalog/{id}/preview`는 기존 웹 인증+Range 제공, 합성 없음. 생성 샘플/원본 녹음 구분. 캐시는 config hash + reference hash로 무효화. 샘플 실제 준비 도구 `tools/prepare_voice_gallery.py`는 서버 종료 후 실행.
+- 회귀: Python 전체 81개, Node UI 12개 통과. 마지막 worker 입력 타입 보완 후 관련 Python 17개 추가 통과. git diff --check 통과.
+- 브라우저: 빈 대본에서 소희 선택 즉시 재생, 5.44초 끝까지 ended=true 확인. 남성/검색/즐겨찾기/별도 샘플 버튼(현재 목소리 유지) 정상. 고급 설정 모델별 항목 확인. 좁은 화면 가로 넘침 없음. 임시 viewport 해제.
+- 모든 변경은 기존 dirty worktree와 함께 미커밋. VoiceStudio clone은 ignored `.runtime/research/VoiceStudio`, 소스/스타일/의존성 제품 복사 없음.
+
+- 최종 샘플: 생성 캐시 20/20 준비 및 자동 검사 통과, 누락 없음. 원본 미리듣기 6개 포함 총 26개 카드. 모든 캐시 HTTP/WAV 검증, 최대 73.5ms. `.runtime/gallery-http-audit.json`, `data/voice-gallery/preparation-report.json` 참조.
+- 정식 UI 요청 #33: Qwen 소희, Temperature 0.95, HQ 생성 성공. 약 4.8초. 기록 재사용으로 같은 목소리와 수치 복원 검증.
+- 서버 PID 53980, http://127.0.0.1:8765, `.runtime/hosting-session.json` 갱신. 외부 API 키 환경 재주입 및 인증 확인(키 미출력). 임시 읽기 전용 UI 검증 서버는 종료. 8766의 다른 앱 서버는 건드리지 않음.
+
+
+## 2026-09-28 UI 사용성 개선 완료
+
+- 사용자 요청 ‘개선해!’에 따라 UI 리뷰에서 제시한 동선/선택 혼동/서버 상태/가독성/분류/녹음 등록을 구현. VoiceBench 밖은 수정하지 않음. 이전 dirty 변경 전체 보존, 커밋/푸시 없음.
+- `usability.css/js`: 갤러리를 native dialog로 분리. 제목/현재 생성 목소리를 고정 표시, 카드를 고르면 창 닫기+대본 포커스+즉시 샘플 재생. 메인은 대본/선택/하단 sticky 생성 버튼. 기본/내 목소리/모델별 비교로 구분하고 개수를 화자 수가 아닌 ‘선택 항목’으로 표시. 작은 글씨/명암/터치 영역 보완.
+- 연결 상태, 지속 offline 안내, 재연결 버튼과 자동 재시도, offline 생성 제출 차단. polling 중첩 방지. UI 파일 SHA256 버전 변경 안내. 갱신 시 대본 localStorage+목소리/엔진/Seed/QA/고급 수치 sessionStorage 복원. 업로드 중인 파일은 재선택 필요.
+- `recording.js`: 브라우저 지원 음성 파일 최대30MB/5분 → 구간3~30초 선택 → 24kHz mono PCM16 WAV 자동 변환/미리듣기. 선택 구간만 업로드. 새 파일을 고르면 이전 녹음 대본 초기화. 새 구간 미적용 상태에서 등록 차단. 자동 인식 중 직접 입력/파일·구간 변경 시 늦은 응답 무시.
+- `recordings.py`, `POST /api/voices/transcribe`: 기존 웹 인증, WAV 길이/형식/완전성 검증 공유. 로컬 Whisper Base 한국어 인식, CPU 전용 subprocess timeout110초/동시1개/임시 파일 정리. 모델 다운로드/TTS 큐 생성 없음. 원본 library 등록 API 유지. 자동 인식 결과는 사용자 검토 필요.
+- 검증: Python85개 전체 / Node19개 통과, git diff --check. 실제 브라우저 WAV5.4초→4초 편집/재생, 공식 AmericanMale MP3→15초 WAV 변환, 소희 한국어 샘플 전체 문장 인식 성공. Qwen 필터+미리듣기가 실제 ZONOS2 선택을 바꾸지 않음, 선택 후 창 닫힘/대본 focus/재생 계속됨. 새 버전 갱신 후 대본/선택 복원. 390px viewport 가로 넘침 없음; override 해제.
+- 실제 서버 중단 후 offline 표시/제출 차단/대본 유지, 재시작 후 자동 재연결 확인. 외부 Bearer 인증 health200, 저장된 키 보존. 현재 서버 PID90508, hosting-session.json 갱신. 새 TTS 요청/보관함 항목 생성 없음(최신 요청34). 기존 ZONOS2/개인 참조/외부Seed13/HQ 유지.
+- 최종 UI 캡처: `.runtime/ui-review/studio-20260928.png`. 상세 사용법 `docs/standalone-studio.md` 마지막 항목. 현재 http://127.0.0.1:8765 실행 중.

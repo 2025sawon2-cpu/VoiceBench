@@ -24,7 +24,7 @@ if str(ROOT) not in sys.path:
 from adapters.qwen3_tts_worker import QwenWorkerServer
 from voicebench.audio import concatenate_wavs
 from voicebench.quality import WhisperQualityVerifier
-from voicebench.service import STUDIO_ENGINE_SLUG, STUDIO_DEFAULT_SEED, plan_script
+from voicebench.service import QWEN_EXPRESSIVE_SLUG, STUDIO_DEFAULT_SEED, plan_script
 from voicebench.util import sha256_file
 
 
@@ -126,7 +126,7 @@ def main() -> None:
     with sqlite3.connect(f"{(ROOT / 'data/voicebench.sqlite3').as_uri()}?mode=ro", uri=True) as db:
         if db.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','running')").fetchone()[0]:
             raise SystemExit("Wait until the production TTS queue is idle before comparing")
-        row = db.execute("SELECT config_json FROM engines WHERE slug=?", (STUDIO_ENGINE_SLUG,)).fetchone()
+        row = db.execute("SELECT config_json FROM engines WHERE slug=?", (QWEN_EXPRESSIVE_SLUG,)).fetchone()
     if not row:
         raise SystemExit("Register the production Qwen engine first")
     config = json.loads(row[0])

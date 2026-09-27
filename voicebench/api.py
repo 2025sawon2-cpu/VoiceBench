@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import mimetypes
 import os
 import re
@@ -19,6 +20,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from .config import Paths
 from .db import Database
 from .engines import shutdown_workers
+from .recordings import ReferenceTranscriber
 from .runner import JobRunner
 from .service import STUDIO_DEFAULT_SEED, STUDIO_ENGINE_SLUG, Service
 
@@ -33,6 +35,7 @@ class VoiceBenchServer(ThreadingHTTPServer):
         self.service = Service(paths, self.database)
         self.service.recover_interrupted_jobs()
         self.runner = JobRunner(paths, self.database)
+        self.reference_transcriber = ReferenceTranscriber(paths.root)
         self.access_key = os.environ.get("VOICEBENCH_ACCESS_KEY", "")
         self.external_api_key = os.environ.get("VOICEBENCH_EXTERNAL_API_KEY", "")
         self.external_request_times: deque[float] = deque()
@@ -41,6 +44,14 @@ class VoiceBenchServer(ThreadingHTTPServer):
         self.external_rate_window_seconds = 60
         self.external_max_active = 4
         super().__init__(address, VoiceBenchHandler)
+
+    def ui_version(self) -> str:
+        digest = hashlib.sha256()
+        for path in sorted(self.paths.static.glob("*")):
+            if path.suffix in {".html", ".js", ".css"}:
+                digest.update(path.name.encode())
+                digest.update(path.read_bytes())
+        return digest.hexdigest()[:16]
 
     def start(self) -> None:
         self.runner.start()
@@ -73,7 +84,15 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
             if path == "/api/state":
                 return self.send_json(self.server.service.state())
             if path == "/api/studio":
-                return self.send_json(self.server.service.studio_state())
+                return self.send_json({**self.server.service.studio_state(), "ui_version": self.server.ui_version()})
+            match = re.fullmatch(r"/api/voice-catalog/([a-z0-9_-]+)/preview", path)
+            if match:
+                audio = self.server.service.voice_preview_path(match.group(1))
+                return self.send_file(audio, mimetypes.guess_type(str(audio))[0] or "audio/wav")
+            match = re.fullmatch(r"/api/voices/(\d+)/audio", path)
+            if match:
+                voice = self.server.service.library_voice(int(match.group(1)))
+                return self.send_file(Path(voice["reference_path"]), "audio/wav")
             match = re.fullmatch(r"/api/projects/(\d+)", path)
             if match:
                 return self.send_json(self.server.service.get_project(int(match.group(1))))
@@ -177,7 +196,9 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
             if path == "/api/studio/preview":
                 payload = self.read_json()
                 return self.send_json(
-                    self.server.service.preview_studio_script(payload.get("text", ""))
+                    self.server.service.preview_studio_script(
+                        payload.get("text", ""), payload.get("engine_slug") or STUDIO_ENGINE_SLUG
+                    )
                 )
             if path == "/api/studio/synthesize":
                 payload = self.read_json()
@@ -187,9 +208,21 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
                         int(payload.get("seed", STUDIO_DEFAULT_SEED)),
                         payload.get("engine_slug", STUDIO_ENGINE_SLUG),
                         quality_mode=payload.get("quality_mode", "long_form_hq"),
+                        voice_project_id=payload.get("voice_project_id"),
+                        voice_id=payload.get("voice_id"),
+                        generation=payload.get("generation"),
                     ),
                     status=HTTPStatus.CREATED,
                 )
+            if path == "/api/voices/transcribe":
+                transcript = self.server.reference_transcriber.transcribe(self.read_body(maximum=12 * 1024 * 1024))
+                return self.send_json({"transcript": transcript})
+            if path == "/api/voices":
+                return self.send_json(self.server.service.create_library_voice(
+                    unquote(self.headers.get("X-Voice-Name", "")),
+                    unquote(self.headers.get("X-Reference-Text", "")),
+                    self.read_body(maximum=12 * 1024 * 1024),
+                ), status=HTTPStatus.CREATED)
             match = re.fullmatch(r"/api/projects/(\d+)/reference", path)
             if match:
                 content = self.read_body(maximum=512 * 1024 * 1024)
@@ -467,6 +500,8 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type or mimetypes.guess_type(path.name)[0] or "application/octet-stream")
         self.send_header("Content-Length", str(content_length))
         self.send_header("Accept-Ranges", "bytes")
+        if self.server.paths.static.resolve() in path.resolve().parents:
+            self.send_header("Cache-Control", "no-cache")
         if status == HTTPStatus.PARTIAL_CONTENT:
             self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
         self.end_headers()
@@ -494,6 +529,16 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
         target = (self.server.paths.static / relative).resolve()
         if self.server.paths.static.resolve() not in target.parents and target != self.server.paths.static.resolve():
             raise FileNotFoundError(relative)
+        if relative == "index.html":
+            content = target.read_text(encoding="utf-8").replace("__VOICEBENCH_UI_VERSION__", self.server.ui_version()).encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if not head_only:
+                self.wfile.write(content)
+            return
         self.send_file(target, head_only=head_only)
 
 
