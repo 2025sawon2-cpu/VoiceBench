@@ -22,7 +22,7 @@ from .db import Database
 from .engines import shutdown_workers
 from .recordings import ReferenceTranscriber
 from .runner import JobRunner
-from .service import STUDIO_DEFAULT_SEED, STUDIO_ENGINE_SLUG, Service
+from .service import STUDIO_DEFAULT_SEED, Service
 
 
 class VoiceBenchServer(ThreadingHTTPServer):
@@ -197,7 +197,7 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
                 payload = self.read_json()
                 return self.send_json(
                     self.server.service.preview_studio_script(
-                        payload.get("text", ""), payload.get("engine_slug") or STUDIO_ENGINE_SLUG
+                        payload.get("text", ""), payload.get("engine_slug")
                     )
                 )
             if path == "/api/studio/synthesize":
@@ -206,7 +206,7 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
                     self.server.service.create_studio_request(
                         payload.get("text", ""),
                         int(payload.get("seed", STUDIO_DEFAULT_SEED)),
-                        payload.get("engine_slug", STUDIO_ENGINE_SLUG),
+                        payload.get("engine_slug"),
                         quality_mode=payload.get("quality_mode", "long_form_hq"),
                         voice_project_id=payload.get("voice_project_id"),
                         voice_id=payload.get("voice_id"),
@@ -300,6 +300,7 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
                     "status": "ok",
                     "service": "VoiceBench External TTS API",
                     "active_requests": self.server.service.active_external_tts_count(),
+                    **self.server.service.synthesis_readiness(),
                 }
             )
         match = re.fullmatch(r"/v1/tts/(\d+)/audio", path)
@@ -333,10 +334,10 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
         text = payload.get("text", "")
         if not isinstance(text, str):
             raise ValueError("text must be a string.")
-
+        generation_key = payload.get('generation_key', '')
         now = time.monotonic()
         with self.server.external_request_lock:
-            reusable = self.server.service.reusable_external_tts_request(text)
+            reusable = self.server.service.reusable_external_tts_request(text, generation_key)
             if reusable:
                 reusable["reused"] = True
                 return self.send_json(reusable, status=HTTPStatus.OK)
@@ -359,7 +360,7 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
                     {"error": "The TTS queue is full. Try again later."},
                     status=HTTPStatus.TOO_MANY_REQUESTS,
                 )
-            request = self.server.service.create_external_tts_request(text)
+            request = self.server.service.create_external_tts_request(text, generation_key)
             self.server.external_request_times.append(now)
         response = self.server.service.external_tts_request(request["id"])
         response["reused"] = False

@@ -13,7 +13,7 @@ from typing import Any
 
 from .voices import catalog, public_catalog, controls, validate_generation, QWEN_CUSTOM, family, FAMILIES
 from .recordings import validate_voice_clip
-from .config import Paths
+from .config import Paths, DEFAULT_STUDIO_ENGINE_SLUG, local_studio_engine
 from .db import Database
 from .util import atomic_write_bytes, json_dumps, sha256_file, system_snapshot, utc_now
 
@@ -42,7 +42,7 @@ DEFAULT_CORPUS = [
 ]
 
 STUDIO_DESCRIPTION = "VoiceBench personal TTS studio"
-STUDIO_ENGINE_SLUG = "zonos2-q8-experimental"
+STUDIO_ENGINE_SLUG = DEFAULT_STUDIO_ENGINE_SLUG
 QWEN_EXPRESSIVE_SLUG = "qwen3-tts-17b-pascal-expressive"
 STUDIO_INPUT_POLICY = "single_segment_full_text_v1"
 STUDIO_DEFAULT_SEED = 13
@@ -342,6 +342,7 @@ class Service:
     def __init__(self, paths: Paths, database: Database):
         self.paths = paths
         self.db = database
+        self.default_engine_slug = local_studio_engine(paths.root)
         self._ensure_defaults()
 
     def _ensure_defaults(self) -> None:
@@ -618,7 +619,8 @@ class Service:
         return (path, transcript.read_text(encoding="utf-8").strip() if transcript.exists() else "",
                 "내 목소리 · B 레퍼런스", STUDIO_DESCRIPTION)
 
-    def ensure_studio_project(self, engine_slug: str = STUDIO_ENGINE_SLUG) -> dict[str, Any]:
+    def ensure_studio_project(self, engine_slug: str | None = None) -> dict[str, Any]:
+        engine_slug = engine_slug or self.default_engine_slug
         reference, reference_text, voice_name, description = self.studio_reference(engine_slug)
         if not reference.exists():
             raise FileNotFoundError("선택된 기본 레퍼런스 음성 또는 대본이 없습니다.")
@@ -641,8 +643,9 @@ class Service:
         )
         return self.get_project(project["id"])
 
-    def preview_studio_script(self, text: str, engine_slug: str = STUDIO_ENGINE_SLUG) -> dict[str, Any]:
+    def preview_studio_script(self, text: str, engine_slug: str | None = None) -> dict[str, Any]:
         """Use the synthesis planner without creating projects, prompts or jobs."""
+        engine_slug = engine_slug or self.default_engine_slug
         if not isinstance(text, str):
             raise ValueError("대본은 문자열이어야 합니다.")
         segments = plan_studio_script(text, engine_slug)
@@ -660,7 +663,7 @@ class Service:
         self,
         text: str,
         seed: int = STUDIO_DEFAULT_SEED,
-        engine_slug: str = STUDIO_ENGINE_SLUG,
+        engine_slug: str | None = None,
         source: str = "studio",
         quality_mode: str = LONG_FORM_QUALITY_MODE,
         request_fingerprint: str | None = None,
@@ -668,6 +671,7 @@ class Service:
         voice_id: str | None = None,
         generation: dict | None = None,
     ) -> dict[str, Any]:
+        engine_slug = engine_slug or self.default_engine_slug
         selected_voice = None
         if voice_id or generation:
             if source != "studio":
@@ -752,16 +756,18 @@ class Service:
             )
         return self.studio_request(request_id)
 
-    def external_tts_fingerprint(self, text: str) -> tuple[str, str]:
+    def external_tts_fingerprint(self, text: str, generation_key: str = "") -> tuple[str, str]:
+        if not isinstance(generation_key, str) or (generation_key and not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", generation_key)):
+            raise ValueError("generation_key must contain 1–100 letters, digits, underscores or hyphens.")
         normalized = text.strip()
         if not normalized:
             raise ValueError("합성할 대본을 입력하세요.")
         project = self.ensure_studio_project()
         engine = self.db.fetch_one(
-            "SELECT * FROM engines WHERE slug=? AND enabled=1", (STUDIO_ENGINE_SLUG,)
+            "SELECT * FROM engines WHERE slug=? AND enabled=1", (self.default_engine_slug,)
         )
         if not engine:
-            raise ValueError(f"사용 가능한 TTS 엔진이 없습니다: {STUDIO_ENGINE_SLUG}")
+            raise ValueError(f"사용 가능한 TTS 엔진이 없습니다: {self.default_engine_slug}")
         fingerprint_data = {
             "version": 7,
             "segmentation_policy": "zonos_shorts_whole_240_v1",
@@ -775,14 +781,16 @@ class Service:
             "reference_sha256": project.get("reference_sha256"),
             "reference_text": project.get("reference_text", ""),
         }
+        if generation_key:
+            fingerprint_data['generation_key'] = generation_key
         digest = hashlib.sha256(json_dumps(fingerprint_data).encode("utf-8")).hexdigest()
         return normalized, digest
 
-    def reusable_external_tts_request(self, text: str) -> dict[str, Any] | None:
-        normalized, fingerprint = self.external_tts_fingerprint(text)
+    def reusable_external_tts_request(self, text: str, generation_key: str = "") -> dict[str, Any] | None:
+        normalized, fingerprint = self.external_tts_fingerprint(text, generation_key)
         project = self.ensure_studio_project()
         engine = self.db.fetch_one(
-            "SELECT id FROM engines WHERE slug=? AND enabled=1", (STUDIO_ENGINE_SLUG,)
+            "SELECT id FROM engines WHERE slug=? AND enabled=1", (self.default_engine_slug,)
         )
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=EXTERNAL_REUSE_WINDOW_HOURS)).isoformat(
             timespec="seconds"
@@ -816,8 +824,8 @@ class Service:
             return None
         return self.external_tts_request(row["id"])
 
-    def create_external_tts_request(self, text: str) -> dict[str, Any]:
-        normalized, fingerprint = self.external_tts_fingerprint(text)
+    def create_external_tts_request(self, text: str, generation_key: str = "") -> dict[str, Any]:
+        normalized, fingerprint = self.external_tts_fingerprint(text, generation_key)
         return self.create_studio_request(
             normalized,
             STUDIO_DEFAULT_SEED,
@@ -1136,13 +1144,39 @@ class Service:
         project = self.create_project(name.strip(), "voice-library:v1")
         return self.upload_reference(project["id"], "reference.wav", content, transcript)
 
+    def synthesis_readiness(self) -> dict[str, Any]:
+        """Check local prerequisites without loading a model or queuing speech."""
+        errors = []
+        engine = self.db.fetch_one(
+            "SELECT * FROM engines WHERE slug=? AND enabled=1", (self.default_engine_slug,)
+        )
+        if not engine:
+            errors.append(f"기본 음성 엔진이 설치·활성화되지 않았습니다: {self.default_engine_slug}")
+        else:
+            config = json.loads(engine["config_json"])
+            if engine["kind"] == "command":
+                runtime = config.get("worker") or config
+                command = runtime.get("command") or []
+                cwd = Path(runtime.get("cwd") or self.paths.root)
+                if not cwd.is_dir():
+                    errors.append("음성 엔진의 작업 폴더가 없습니다.")
+                executable = str(command[0]) if command else ""
+                if not executable or not ((cwd / executable).is_file() or shutil.which(executable)):
+                    errors.append("음성 엔진 실행 파일을 찾지 못했습니다.")
+        reference, transcript, _, _ = self.studio_reference(self.default_engine_slug)
+        if not reference.is_file():
+            errors.append("기본 레퍼런스 음성이 없습니다.")
+        if engine and json.loads(engine["config_json"]).get("requires_reference_text") and not transcript:
+            errors.append("기본 레퍼런스 대본이 없습니다.")
+        return {"ready": not errors, "default_engine_slug": self.default_engine_slug, "errors": errors}
+
     def studio_state(self) -> dict[str, Any]:
-        reference, _, voice_name, _ = self.studio_reference(STUDIO_ENGINE_SLUG)
+        reference, _, voice_name, _ = self.studio_reference(self.default_engine_slug)
         available = reference.exists()
         project = self.ensure_studio_project() if available else None
         engine = self.db.fetch_one(
             "SELECT id,slug,name,version,enabled FROM engines WHERE slug=?",
-            (STUDIO_ENGINE_SLUG,),
+            (self.default_engine_slug,),
         )
         studio_engines = self.db.fetch_all(
             """SELECT id,slug,name,version,enabled FROM engines
@@ -1188,7 +1222,7 @@ class Service:
                 "reference_path": str(reference) if available else None,
             },
             "engine": engine,
-            "default_engine_slug": STUDIO_ENGINE_SLUG,
+            "default_engine_slug": self.default_engine_slug,
             "studio_engines": studio_engines,
             "voice_catalog": public_catalog(self.paths, self.db),
             "voices": [
