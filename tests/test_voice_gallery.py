@@ -39,6 +39,17 @@ class VoiceGalleryTests(unittest.TestCase):
         next_req=self.service.create_studio_request('Hello.',voice_id='zonos-americanmale')
         self.assertNotEqual(next_req['project_id'],req['project_id'])
 
+    def test_small_gpu_quant_resolves_official_voices_without_changing_default(self):
+        with self.db.connect() as connection:
+            connection.execute('UPDATE engines SET enabled=0 WHERE slug=?',(STUDIO_ENGINE_SLUG,))
+        self.service.upsert_engine(dict(slug='zonos2-q4-experimental',name='ZONOS2 Q4',kind='mock',config={}))
+        voice=self.service.external_voice('zonos-americanmale')
+        self.assertEqual(voice['engine_slug'],'zonos2-q4-experimental')
+        request=self.service.create_external_tts_request('안녕하세요.',voice_id=voice['id'])
+        self.assertEqual(request['engine_slug'],'zonos2-q4-experimental')
+        self.assertEqual(self.service.default_engine_slug,STUDIO_ENGINE_SLUG)
+        self.assertIn('zonos2-q4-experimental',{e['slug'] for e in self.service.studio_state()['studio_engines']})
+
     def test_preview_read_never_queues_work_and_invalidates_changed_reference(self):
         voice=self.service.catalog_voice('zonos-americanmale')
         self.assertEqual(voice['preview_kind'],'reference')
@@ -53,11 +64,41 @@ class VoiceGalleryTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.service.voice_preview_path('../../secrets')
         with self.assertRaises(FileNotFoundError):self.service.voice_preview_path('qwen-sohee')
 
-    def test_invalid_overrides_and_external_voice_selection_are_rejected(self):
+    def test_invalid_overrides_and_unapproved_external_voices_are_rejected(self):
         for params in ({'temperature':float('nan')},{'temperature':True},{'top_k':1.5},{'speaker':'Ryan'},{'temperature':3}):
             with self.subTest(params=params),self.assertRaises(ValueError):validate_generation(QWEN_CUSTOM,params)
-        with self.assertRaises(ValueError):self.service.create_studio_request('Hello.',source='external_api',voice_id='zonos-americanmale')
+        with self.assertRaises(ValueError):self.service.create_studio_request('Hello.',source='external_api',voice_id='personal-zonos2')
         with self.assertRaises(ValueError):self.service.create_studio_request('Hello.',source='external_api',generation={'temperature':.9})
+
+    def test_external_voice_identity_is_queued_and_deduplicated_separately(self):
+        female=self.service.create_external_tts_request('안녕하세요.',voice_id='qwen-sohee')
+        male=self.service.create_external_tts_request('안녕하세요.',voice_id='qwen-aiden')
+        zonos=self.service.create_external_tts_request('안녕하세요.',voice_id='zonos-americanmale')
+        self.assertEqual(len({female['id'],male['id'],zonos['id']}),3)
+        self.assertEqual(self.service.reusable_external_tts_request('안녕하세요.',voice_id='qwen-sohee')['id'],female['id'])
+        self.assertEqual(self.service.external_tts_request(male['id'])['voice_id'],'qwen-aiden')
+        runner=JobRunner(self.paths,self.db);job=runner.claim();engine,meta=runner._synthesis_engine(job)
+        self.assertEqual(engine['slug'],QWEN_CUSTOM)
+        self.assertEqual(meta['generation']['speaker'],'Sohee')
+        self.assertEqual(female['seed'],13)
+        self.assertEqual(self.service.default_engine_slug,STUDIO_ENGINE_SLUG)
+
+    def test_external_voice_preview_uses_bearer_and_does_not_create_jobs(self):
+        import http.client
+        from voicebench.api import VoiceBenchServer
+        with patch.dict('os.environ',{'VOICEBENCH_EXTERNAL_API_KEY':'test-only'}):
+            server=VoiceBenchServer(('127.0.0.1',0),self.paths)
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        try:
+            conn=http.client.HTTPConnection(*server.server_address,timeout=5)
+            conn.request('GET','/v1/voices');r=conn.getresponse();r.read();self.assertEqual(r.status,401)
+            conn.request('GET','/v1/voices',headers={'Authorization':'Bearer test-only'});r=conn.getresponse();data=json.loads(r.read())
+            self.assertTrue(any(v['id']=='qwen-sohee' for v in data['voices']))
+            self.assertFalse(any(v['kind']!='official' for v in data['voices']))
+            conn.request('GET','/v1/voices/zonos-americanmale/preview',headers={'Authorization':'Bearer test-only','Range':'bytes=0-7'})
+            r=conn.getresponse();self.assertEqual(r.status,206);self.assertEqual(r.read(),b'original');conn.close()
+            self.assertEqual(self.db.fetch_one('SELECT COUNT(*) n FROM jobs')['n'],0)
+        finally:server.shutdown();server.server_close();thread.join(timeout=5)
 
     def test_native_worker_uses_custom_voice_without_any_reference_or_clone_prompt(self):
         server=object.__new__(QwenWorkerServer);server.model_name='Qwen/CustomVoice'

@@ -15,15 +15,17 @@ from voicebench.service import Service
 def engine_spec(root, engine, manifest):
     runtime = root / ".runtime" / "engines" / engine
     fish = engine == "fish-speech"
+    quant = manifest.get('quant','q8_0')
+    slug = 'zonos2-q8-experimental' if quant=='q8_0' else 'zonos2-'+quant.split('_')[0]+'-experimental'
     command = [str(runtime / "venv/Scripts/python.exe"),
                str(root / "adapters" / ("fish_speech_worker.py" if fish else "zonos2_worker.py")),
                "--model-path", manifest["path"], "--port", "8790"]
     if not fish:
         command += ["--binary", str(runtime / "build-cuda/zonos2-server.exe"), "--backend", "cuda",
-                    "--dac-device", "cpu"]
+                    "--dac-device", "cpu", "--model-file", f'zonos2-{quant}.gguf']
     return {
-        "slug": "fish-s2-pro-experimental" if fish else "zonos2-q8-experimental",
-        "name": "Fish S2-Pro · BF16 · 연구/비상업 평가" if fish else "ZONOS2 · 내 목소리 · 기본",
+        "slug": "fish-s2-pro-experimental" if fish else slug,
+        "name": "Fish S2-Pro · BF16 · 연구/비상업 평가" if fish else f"ZONOS2 · {quant.upper()} · 내 목소리",
         "kind": "command", "enabled": True,
         "version": manifest["revision"],
         "config": {
@@ -39,7 +41,7 @@ def engine_spec(root, engine, manifest):
             "worker": {
                 "command": command, "endpoint": "http://127.0.0.1:8790/synthesize",
                 "health_url": "http://127.0.0.1:8790/health",
-                "model": "fishaudio/s2-pro" if fish else "Zyphra/ZONOS2-Q8_0",
+                "model": "fishaudio/s2-pro" if fish else "Zyphra/ZONOS2-"+quant.upper(),
                 "attention": "sdpa-math" if fish else "cuda", "startup_timeout_seconds": 360,
                 **({"runtime_version": 2} if not fish else {}),
                 "log_path": str(root / ".runtime/logs" / f"{engine}-worker.log"),
@@ -51,13 +53,15 @@ def engine_spec(root, engine, manifest):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("engine", choices=["fish-speech", "zonos2", "all"], default="all", nargs="?")
+    parser.add_argument('--quant',choices=['q8_0','q6_k','q5_k','q4_k'],default='q8_0')
     args = parser.parse_args()
     paths = Paths.discover()
     service = Service(paths, Database(paths.database))
     for engine in (["fish-speech", "zonos2"] if args.engine == "all" else [args.engine]):
         runtime = paths.root / ".runtime/engines" / engine
-        manifest = json.loads((runtime / "model.json").read_text(encoding="utf-8"))
-        required = ("config.json", "codec.pth", "model.safetensors.index.json") if engine == "fish-speech" else ("zonos2-q8_0.gguf", "dac.gguf", "spk-encoder.gguf")
+        name='model.json' if engine=='fish-speech' or args.quant=='q8_0' else f'model-{args.quant}.json'
+        manifest = json.loads((runtime / name).read_text(encoding="utf-8"))
+        required = ("config.json", "codec.pth", "model.safetensors.index.json") if engine == "fish-speech" else (f"zonos2-{args.quant}.gguf", "dac.gguf", "spk-encoder.gguf")
         if not all((Path(manifest["path"]) / f).is_file() for f in required):
             raise SystemExit(f"Missing weights for {engine}")
         if engine == "zonos2" and not all((runtime / f).is_file() for f in (
@@ -73,7 +77,7 @@ def main():
             preset = runtime / "python-source/default_voices/AmericanMale.mp3"
             if preset.is_file():
                 male = json.loads(json.dumps(spec))
-                male.update(slug="zonos2-q8-american-male", name="ZONOS2 · 기본 남성 AmericanMale")
+                male.update(slug=spec['slug'].replace('-experimental','-american-male'), name=f"ZONOS2 · {args.quant.upper()} · 기본 남성 AmericanMale")
                 male["config"]["reference_preset"] = "AmericanMale"
                 registered = service.upsert_engine(male)
                 print(f"Registered {registered['slug']} (id={registered['id']})")

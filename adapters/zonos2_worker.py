@@ -40,7 +40,7 @@ def generation_request(payload, embedding_npy):
 
 
 class ZonosBackend:
-    def __init__(self, model_path, binary, native_port=8791, backend="cuda", dac_device="cpu"):
+    def __init__(self, model_path, binary, native_port=8791, backend="cuda", dac_device="cpu", model_file="zonos2-q8_0.gguf"):
         import socket
         # Never attach to or terminate an unrelated process occupying this port.
         with socket.socket() as probe:
@@ -50,6 +50,10 @@ class ZonosBackend:
         self.count = 0
         self.backend = backend
         self.dac_device = dac_device
+        if model_file not in {f'zonos2-{q}.gguf' for q in ('q8_0','q6_k','q5_k','q4_k')}:
+            raise ValueError('Unsupported ZONOS2 model file')
+        self.quantization = model_file.removeprefix('zonos2-').removesuffix('.gguf').upper()
+        self.model_name = 'Zyphra/ZONOS2-'+self.quantization
         self.speaker_cache = OrderedDict()
         start = time.perf_counter()
         from zonos2_speaker import SpeakerEncoder
@@ -60,7 +64,7 @@ class ZonosBackend:
         # implementation. Hard links keep the original downloaded files intact.
         native_models = runtime / "native-models"
         native_models.mkdir(exist_ok=True)
-        for name in ("zonos2-q8_0.gguf", "dac.gguf"):
+        for name in (model_file, "dac.gguf"):
             destination = native_models / name
             if not destination.exists():
                 os.link(self.path / name, destination)
@@ -69,10 +73,12 @@ class ZonosBackend:
         if (native_models / "spk-encoder.gguf").exists():
             raise RuntimeError("Native CPU speaker encoder must not be auto-loaded")
         environment = os.environ.copy()
-        cuda_bin = runtime.parents[1] / "toolchains/cuda-12.9/bin"
+        # Engine/model folders may be junctions on a larger data drive. Resolve
+        # the toolchain from the workspace, not the junction's physical parent.
+        cuda_bin = Path(__file__).resolve().parents[1] / ".runtime/toolchains/cuda-12.9/bin"
         environment["PATH"] = str(cuda_bin) + os.pathsep + environment.get("PATH", "")
         self.process = subprocess.Popen([
-            str(binary), "zonos2-q8_0.gguf",
+            str(binary), model_file,
             "--dac", "dac.gguf",
             "--host", "127.0.0.1", "--port", str(native_port),
             "--gpu", "--dac-gpu" if dac_device == "cuda" else "--dac-cpu",
@@ -99,7 +105,7 @@ class ZonosBackend:
 
     def health(self):
         return {"status": "ready" if self.process.poll() is None else "failed",
-                "model": MODEL, "attention": self.backend, "quantization": "Q8_0",
+                "model": self.model_name, "attention": self.backend, "quantization": self.quantization,
                 "runtime_version": 2, "dac_device": self.dac_device,
                 "native_pid": self.process.pid, "request_count": self.count}
 
@@ -145,9 +151,9 @@ class ZonosBackend:
         self.count += 1
         # Never persist the base64 reference in job metrics/manifests.
         settings = {k: v for k, v in body.items() if k not in ("speaker_embedding_base64", "text")}
-        return {"model": MODEL, "model_path": str(self.path), "output": str(output),
+        return {"model": self.model_name, "model_path": str(self.path), "output": str(output),
                 "seed": body["seed"], "generation": settings, "backend": self.backend,
-                "quantization": "Q8_0", "sample_rate": rate, "audio_seconds": duration,
+                "quantization": self.quantization, "sample_rate": rate, "audio_seconds": duration,
                 "runtime_version": 2, "dac_device": self.dac_device,
                 "speaker_cache_entries": len(self.speaker_cache),
                 "speaker_encoder": "official-ecapa-pytorch-fp32-cpu",
@@ -163,5 +169,6 @@ if __name__ == "__main__":
     parser.add_argument("--native-port", type=int, default=8791)
     parser.add_argument("--backend", choices=("cuda", "vulkan"), default="cuda")
     parser.add_argument("--dac-device", choices=("cpu", "cuda"), default="cpu")
+    parser.add_argument('--model-file',default='zonos2-q8_0.gguf')
     args = parser.parse_args()
-    serve(ZonosBackend(args.model_path, args.binary, args.native_port, args.backend, args.dac_device), args.port)
+    serve(ZonosBackend(args.model_path, args.binary, args.native_port, args.backend, args.dac_device,args.model_file), args.port)

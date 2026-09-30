@@ -19,6 +19,7 @@ At the beginning of every new session in this workspace, before taking task acti
 - Preserve the dirty worktree. Never reset, discard, or overwrite existing changes merely to simplify the task.
 - Do not write web passwords, API keys, or other secret values into source files, documentation, logs, commits, or responses unless the user explicitly requests a one-time display from the local secret source.
 - Web Studio comparison controls may remain adjustable. MCP/external API engine, reference, quality mode, and Seed are server-controlled; supplied external `seed` values must be ignored.
+- The owner explicitly enabled named Qwen CustomVoice and ZONOS2 official voices for Hotpost. External clients may select an approved `voice_id` from `/v1/voices`; its engine and reference are resolved by the server. Omission preserves the configured personal default. Arbitrary engine/reference/generation overrides remain prohibited.
 
 ## Verification
 

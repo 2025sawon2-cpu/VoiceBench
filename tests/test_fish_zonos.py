@@ -53,6 +53,13 @@ class NewTTSBackendsTest(unittest.TestCase):
         self.assertTrue(specs[0]["config"]["requires_reference_text"])
         self.assertFalse(specs[1]["config"]["requires_reference_text"])
 
+    def test_small_gpu_model_is_a_separate_engine_and_worker_identity(self):
+        spec=engine_spec(ROOT,'zonos2',{'revision':'test','path':'weights','quant':'q4_k'})
+        self.assertEqual(spec['slug'],'zonos2-q4-experimental')
+        worker=spec['config']['worker']
+        self.assertEqual(worker['model'],'Zyphra/ZONOS2-Q4_K')
+        self.assertEqual(worker['command'][-2:],['--model-file','zonos2-q4_k.gguf'])
+
     def test_zonos_close_only_terminates_its_owned_child(self):
         backend = ZonosBackend.__new__(ZonosBackend)
         backend.process = Mock()

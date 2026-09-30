@@ -673,8 +673,13 @@ class Service:
     ) -> dict[str, Any]:
         engine_slug = engine_slug or self.default_engine_slug
         selected_voice = None
+        if source == 'external_api' and voice_id:
+            allowed = self.external_voice(voice_id)
+            engine_slug = allowed['engine_slug']
+            seed = STUDIO_DEFAULT_SEED
+            quality_mode = LONG_FORM_QUALITY_MODE
         if voice_id or generation:
-            if source != "studio":
+            if source != "studio" and (source != 'external_api' or generation or not voice_id):
                 raise ValueError("외부 요청은 목소리와 고급 설정을 변경할 수 없습니다.")
         if voice_id:
             if voice_project_id is not None:
@@ -756,18 +761,34 @@ class Service:
             )
         return self.studio_request(request_id)
 
-    def external_tts_fingerprint(self, text: str, generation_key: str = "") -> tuple[str, str]:
+    def external_voice(self, voice_id: str) -> dict:
+        if not isinstance(voice_id, str): raise ValueError('목소리 ID를 확인하세요.')
+        voice = self.catalog_voice(voice_id)
+        if voice['kind'] != 'official' or voice['model'] not in {'Qwen', 'ZONOS2'} or not voice['available']:
+            raise ValueError('설치된 Qwen·ZONOS2 기본 목소리 중에서 선택하세요.')
+        return voice
+
+    def external_voice_catalog(self) -> dict:
+        voices = [v for v in public_catalog(self.paths,self.db) if v['kind']=='official' and v['model'] in {'Qwen','ZONOS2'}]
+        for v in voices:
+            if v.get('preview_url'): v['preview_url'] = '/v1/voices/'+v['id']+'/preview'
+        return {'voices':voices,'default_engine_slug':self.default_engine_slug}
+
+    def external_profile(self, voice_id=None):
+        voice = self.external_voice(voice_id) if voice_id else None
+        project = self.ensure_catalog_project(voice) if voice else self.ensure_studio_project()
+        slug = voice['engine_slug'] if voice else self.default_engine_slug
+        engine = self.db.fetch_one('SELECT * FROM engines WHERE slug=? AND enabled=1',(slug,))
+        if not engine: raise ValueError(f'사용 가능한 TTS 엔진이 없습니다: {slug}')
+        return voice,project,engine
+
+    def external_tts_fingerprint(self, text: str, generation_key: str = "", voice_id=None) -> tuple[str, str]:
         if not isinstance(generation_key, str) or (generation_key and not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", generation_key)):
             raise ValueError("generation_key must contain 1–100 letters, digits, underscores or hyphens.")
         normalized = text.strip()
         if not normalized:
             raise ValueError("합성할 대본을 입력하세요.")
-        project = self.ensure_studio_project()
-        engine = self.db.fetch_one(
-            "SELECT * FROM engines WHERE slug=? AND enabled=1", (self.default_engine_slug,)
-        )
-        if not engine:
-            raise ValueError(f"사용 가능한 TTS 엔진이 없습니다: {self.default_engine_slug}")
+        voice,project,engine = self.external_profile(voice_id)
         fingerprint_data = {
             "version": 7,
             "segmentation_policy": "zonos_shorts_whole_240_v1",
@@ -783,15 +804,15 @@ class Service:
         }
         if generation_key:
             fingerprint_data['generation_key'] = generation_key
+        if voice:
+            fingerprint_data['voice_id'] = voice['id']
+            fingerprint_data['speaker'] = voice.get('speaker')
         digest = hashlib.sha256(json_dumps(fingerprint_data).encode("utf-8")).hexdigest()
         return normalized, digest
 
-    def reusable_external_tts_request(self, text: str, generation_key: str = "") -> dict[str, Any] | None:
-        normalized, fingerprint = self.external_tts_fingerprint(text, generation_key)
-        project = self.ensure_studio_project()
-        engine = self.db.fetch_one(
-            "SELECT id FROM engines WHERE slug=? AND enabled=1", (self.default_engine_slug,)
-        )
+    def reusable_external_tts_request(self, text: str, generation_key: str = "", voice_id=None) -> dict[str, Any] | None:
+        normalized, fingerprint = self.external_tts_fingerprint(text, generation_key, voice_id)
+        _,project,engine = self.external_profile(voice_id)
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=EXTERNAL_REUSE_WINDOW_HOURS)).isoformat(
             timespec="seconds"
         )
@@ -824,13 +845,14 @@ class Service:
             return None
         return self.external_tts_request(row["id"])
 
-    def create_external_tts_request(self, text: str, generation_key: str = "") -> dict[str, Any]:
-        normalized, fingerprint = self.external_tts_fingerprint(text, generation_key)
+    def create_external_tts_request(self, text: str, generation_key: str = "", voice_id=None) -> dict[str, Any]:
+        normalized, fingerprint = self.external_tts_fingerprint(text, generation_key, voice_id)
         return self.create_studio_request(
             normalized,
             STUDIO_DEFAULT_SEED,
             source="external_api",
             request_fingerprint=fingerprint,
+            voice_id=voice_id or None,
         )
 
     def external_tts_request(self, request_id: int) -> dict[str, Any]:
@@ -848,6 +870,7 @@ class Service:
             chapters.append(item)
         return {
             "id": request["id"],
+            "voice_id": request.get('voice_id'),
             "status": request["status"],
             "seed": request["seed"],
             "segment_count": request["segment_count"],
@@ -1186,6 +1209,8 @@ class Service:
                  OR slug='voxcpm2-experimental'
                  OR slug='voxcpm2-hq-experimental' OR slug='qwen3-tts-17b-custom-voice'
                  OR slug IN ('fish-s2-pro-experimental', 'zonos2-q8-experimental', 'zonos2-q8-american-male')
+                 OR slug IN ('zonos2-q4-experimental', 'zonos2-q5-experimental', 'zonos2-q6-experimental',
+                             'zonos2-q4-american-male', 'zonos2-q5-american-male', 'zonos2-q6-american-male')
                  OR slug IN ('voxcpm2-experimental-bright', 'voxcpm2-experimental-energetic')
                )
                ORDER BY CASE slug

@@ -23,17 +23,22 @@ def sha256(path):
 
 def main():
     root = Path(__file__).resolve().parents[1]
-    target = root / ".runtime/toolchains"
+    target = (root / ".runtime/toolchains").resolve()
     target.mkdir(parents=True, exist_ok=True)
     if not (target / "msvc/setup_x64.bat").is_file():
         # Reviewed immutable downloader; actual packages come from Microsoft and
         # are verified against the official VS manifest's SHA256 values.
         url = f"https://gist.githubusercontent.com/mmozeiko/7f3162ec2988e81e56d5c4e22cde9977/raw/{MSVC_REV}/portable-msvc.py"
         script = target / "portable-msvc.py"
-        urllib.request.urlretrieve(url, script)
+        if not script.is_file() or sha256(script) != MSVC_SHA:
+            urllib.request.urlretrieve(url, script)
         if sha256(script) != MSVC_SHA:
             raise RuntimeError("Portable MSVC downloader checksum mismatch")
         source = script.read_text(encoding="utf-8").replace("shutil.rmtree(", "safe_rmtree(")
+        # Windows Installer refuses traversal through user-created junctions.
+        source = source.replace('msiexec /a "{m}"', 'msiexec /a "{m.resolve()}"')
+        # Do not leave a first-time installation hung forever on one CDN socket.
+        source = 'import socket, time\nsocket.setdefaulttimeout(60)\n' + source
         guard = '''def safe_rmtree(path, **kwargs):
   root = Path.cwd().resolve()
   target = Path(path).resolve()
@@ -41,6 +46,21 @@ def main():
   if target == root:
     raise RuntimeError("Refusing to delete toolchain root")
   shutil.rmtree(target, **kwargs)
+
+def retry_download(function):
+  def retry(*args, **kwargs):
+    for attempt in range(5):
+      try:
+        return function(*args, **kwargs)
+      except (OSError, EOFError) as exc:
+        if attempt == 4:
+          raise
+        print(f"Download interrupted; retry {attempt + 1}/4: {type(exc).__name__}", flush=True)
+        time.sleep(2 * (attempt + 1))
+  return retry
+
+download = retry_download(download)
+download_progress = retry_download(download_progress)
 
 '''
         source = source.replace("### parse command-line arguments", guard + "### parse command-line arguments")

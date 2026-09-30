@@ -1,5 +1,5 @@
 """Register the official nine-speaker Qwen model without modifying Base presets."""
-import argparse,json,subprocess,sys
+import argparse,json,subprocess,sys,os
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
@@ -29,7 +29,7 @@ def download():
     fd.are_symlinks_supported=lambda cache_dir=None: False
     model='Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice'
     revision='0c0e3051f131929182e2c023b9537f8b1c68adfe'
-    path=snapshot_download(model,revision=revision,cache_dir=str(ROOT/'.runtime/cache/huggingface/hub'),
+    path=snapshot_download(model,revision=revision,cache_dir=os.environ.get('VOICEBENCH_MODEL_CACHE',str(ROOT/'.runtime/cache/huggingface/hub')),
         allow_patterns=['*.json','*.safetensors','*.txt','*.model','*.tiktoken','LICENSE','README.md'],max_workers=4)
     manifest=ROOT/'.runtime/engines/qwen3-tts/custom-voice.json'
     manifest.write_text(json.dumps(dict(model=model,revision=revision,path=path)),encoding='utf-8')

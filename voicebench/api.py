@@ -294,6 +294,13 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
             self.send_error_json(error)
 
     def handle_external_get(self, path: str) -> None:
+        if path == '/v1/voices':
+            return self.send_json(self.server.service.external_voice_catalog())
+        voice_match = re.fullmatch(r'/v1/voices/([a-z0-9_-]+)/preview',path)
+        if voice_match:
+            self.server.service.external_voice(voice_match.group(1))
+            audio = self.server.service.voice_preview_path(voice_match.group(1))
+            return self.send_file(audio,mimetypes.guess_type(str(audio))[0] or 'audio/wav')
         if path == "/v1/health":
             return self.send_json(
                 {
@@ -335,9 +342,10 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
         if not isinstance(text, str):
             raise ValueError("text must be a string.")
         generation_key = payload.get('generation_key', '')
+        voice_id = payload.get('voice_id')
         now = time.monotonic()
         with self.server.external_request_lock:
-            reusable = self.server.service.reusable_external_tts_request(text, generation_key)
+            reusable = self.server.service.reusable_external_tts_request(text, generation_key, voice_id)
             if reusable:
                 reusable["reused"] = True
                 return self.send_json(reusable, status=HTTPStatus.OK)
@@ -360,7 +368,7 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
                     {"error": "The TTS queue is full. Try again later."},
                     status=HTTPStatus.TOO_MANY_REQUESTS,
                 )
-            request = self.server.service.create_external_tts_request(text, generation_key)
+            request = self.server.service.create_external_tts_request(text, generation_key, voice_id)
             self.server.external_request_times.append(now)
         response = self.server.service.external_tts_request(request["id"])
         response["reused"] = False

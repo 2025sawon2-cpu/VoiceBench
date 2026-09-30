@@ -67,6 +67,10 @@ def config_hash(engine):
 
 def catalog(paths, db):
     engines = {e['slug']:e for e in db.fetch_all('SELECT * FROM engines WHERE enabled=1')}
+    families = dict(FAMILIES)
+    if families['zonos2'][1] not in engines:
+        alternative = next((slug for slug in ('zonos2-q6-experimental','zonos2-q5-experimental','zonos2-q4-experimental') if slug in engines),None)
+        if alternative: families['zonos2'] = ('ZONOS2',alternative)
     folder = paths.data / 'voice-gallery'
     selected = paths.data / 'prepared/ref_voice/selected_reference.wav'
     transcript = selected.with_suffix('.txt')
@@ -94,10 +98,10 @@ def catalog(paths, db):
         row['preview_path'] = str(preview if cache_valid else ref)
         row['preview_format'] = Path(row['preview_path']).suffix
         rows.append(row)
-    for key,(title,slug) in FAMILIES.items():
+    for key,(title,slug) in families.items():
         add('personal-'+key,'내 목소리',slug,'personal','한국어','내 녹음을 바탕으로 만든 목소리','personal',selected,personal_text)
     for speaker,name,gender,native in ZONOS_VOICES:
-        add('zonos-'+speaker.lower(),name,FAMILIES['zonos2'][1],gender,native,'ZONOS2 공식 제공 참조 음성','official',paths.root/'.runtime/engines/zonos2/python-source/default_voices'/(speaker+'.mp3'))
+        add('zonos-'+speaker.lower(),name,families['zonos2'][1],gender,native,'ZONOS2 공식 제공 참조 음성','official',paths.root/'.runtime/engines/zonos2/python-source/default_voices'/(speaker+'.mp3'))
     for speaker,name,gender,native,description in QWEN_VOICES:
         add('qwen-'+speaker.lower(),name,QWEN_CUSTOM,gender,native,description,'official',folder/'previews'/('qwen-'+speaker.lower()+'.wav'),speaker=speaker)
     # Shared artificial references are explicitly not marketed as native speakers of these engines.

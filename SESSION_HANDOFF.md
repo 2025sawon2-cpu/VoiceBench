@@ -444,3 +444,13 @@ The 1.7B engines, Seed 13 defaults, LAN/MCP integration, queue/cancellation fixe
 - 검증: Python85개 전체 / Node19개 통과, git diff --check. 실제 브라우저 WAV5.4초→4초 편집/재생, 공식 AmericanMale MP3→15초 WAV 변환, 소희 한국어 샘플 전체 문장 인식 성공. Qwen 필터+미리듣기가 실제 ZONOS2 선택을 바꾸지 않음, 선택 후 창 닫힘/대본 focus/재생 계속됨. 새 버전 갱신 후 대본/선택 복원. 390px viewport 가로 넘침 없음; override 해제.
 - 실제 서버 중단 후 offline 표시/제출 차단/대본 유지, 재시작 후 자동 재연결 확인. 외부 Bearer 인증 health200, 저장된 키 보존. 현재 서버 PID90508, hosting-session.json 갱신. 새 TTS 요청/보관함 항목 생성 없음(최신 요청34). 기존 ZONOS2/개인 참조/외부Seed13/HQ 유지.
 - 최종 UI 캡처: `.runtime/ui-review/studio-20260928.png`. 상세 사용법 `docs/standalone-studio.md` 마지막 항목. 현재 http://127.0.0.1:8765 실행 중.
+
+
+## 2026-10-01 Hotpost named voices on local GTX 1070 Ti
+
+- This entry describes the local alseo PC, not the earlier Q8-default remote machine. Preserved actual local default `qwen3-tts-17b-pascal-expressive`, personal reference, external Seed 13 and HQ. Owner requested Qwen/ZONOS2 male/female choices in Hotpost.
+- Installed Qwen 1.7B CustomVoice (9 official speakers) and ZONOS2 Q4_K (3 official reference voices). Q8 exceeds this 8GB GPU's memory; Q4 is a separate engine, not a replacement for remote Q8. Native CUDA SM61 build works. Runtime/models/toolchains live under D:/CodexModels/VoiceBench with ignored runtime junctions; no global CUDA or driver changes.
+- All 12 Korean previews passed waveform/ASR validation. Actual authenticated Hotpost adapter requests 86/87 (Qwen Sohee/Aiden), 88/89 (Zonos AmericanMale/AmericanFemale) succeeded with the requested voice identity and Seed 13. These are short functional checks, not a long-form listening comparison.
+- Added authenticated /v1/voices and saved-preview routes. External voice_id resolves only approved installed official voices; arbitrary engine/reference/generation overrides remain forbidden. Cache identity includes selected voice; omission preserves prior default behavior. Hotpost rejects mismatched result voice IDs.
+- VoiceBench 8765 restarted with the existing key; hosting-session.json refreshed. Hotpost 8775 production restart was denied by tool policy (`blocked by policy`, no detailed reason), so that running Python process still lacks the new API. Do not report it deployed. New Hotpost handler was tested on an isolated temporary port with production mutations intercepted; desktop/mobile filters, playback, selection persistence, submitted voice ID and default undo passed. Test server is closed.
+- Setup and contract: docs/hotpost-voices.md. Korean previews are ignored data/voice-gallery/previews; external test WAVs and UI captures are under insta_auto/data/local-services/voice-picker-qa. No model binaries, generated audio or credentials are committed.
