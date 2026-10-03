@@ -55,6 +55,8 @@ Mock 엔진은 하네스 자체를 시험하는 톤 생성기이며 실제 TTS�
 
 ## 새 Windows PC 설치
 
+네 저장소를 한 PC에 함께 설치할 때는 [Hotpost 통합 설치 가이드](https://github.com/dkfdnd/insta_auto/blob/main/docs/windows-install.md)를 먼저 확인하세요. 로컬 API 키·모델·개인 참조 음성은 Git에 포함되지 않습니다.
+
 저장소를 복제한 새 PC에서는 다음 명령으로 애플리케이션, Qwen3-TTS 엔진, 생산 모델과 품질 검사 모델을 설치할 수 있습니다.
 
 ```powershell
