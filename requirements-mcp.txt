@@ -1,0 +1,2 @@
+# Isolated LAN gateway environment; do not install into TTS engine environments.
+mcp==1.30.0

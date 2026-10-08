@@ -8,7 +8,7 @@
 
 ## 접속 정보
 
-- Base URL: `https://explicit-silliness-ceramics.ngrok-free.dev`
+- Base URL: `http://192.168.0.58:8766`
 - 인증: `Authorization: Bearer <VOICEBENCH_API_KEY>`
 - Content-Type: `application/json`
 - 별도의 글자 수 제한 없음(HTTP 요청 본문은 최대 2MB)
@@ -74,15 +74,14 @@ GET /v1/tts/10/audio
 Authorization: Bearer <VOICEBENCH_API_KEY>
 ```
 
-응답은 24kHz mono PCM WAV입니다. 브라우저 및 스트리밍 클라이언트를 위한 HTTP Range 요청도 지원합니다.
+응답은 엔진에 따라 24kHz 또는 44.1kHz mono PCM WAV입니다. 브라우저 및 스트리밍 클라이언트를 위한 HTTP Range 요청도 지원합니다.
 
 ## curl 예제
 
 ```bash
-curl -X POST "https://explicit-silliness-ceramics.ngrok-free.dev/v1/tts" \
+curl -X POST "http://192.168.0.58:8766/v1/tts" \
   -H "Authorization: Bearer $VOICEBENCH_API_KEY" \
   -H "Content-Type: application/json" \
-  -H "ngrok-skip-browser-warning: VoiceBench API client" \
   -d '{"text":"안녕하세요. API 테스트입니다."}'
 ```
 
@@ -93,7 +92,7 @@ curl -X POST "https://explicit-silliness-ceramics.ngrok-free.dev/v1/tts" \
 ```powershell
 $env:VOICEBENCH_API_KEY = '<API 키>'
 python tools\external_tts_client.py `
-  --base-url 'https://explicit-silliness-ceramics.ngrok-free.dev' `
+  --base-url 'http://192.168.0.58:8766' `
   --text '안녕하세요. 외부 AI가 요청한 대본입니다.' `
   --output result.wav
 ```
@@ -138,3 +137,6 @@ python tools\external_tts_client.py `
 
 
 2026-09-26: 기본 엔진은 ZONOS2이며 기존 본인 목소리와 Seed 13을 유지합니다. 240자 이하 대본은 한 번에 생성합니다. HQ 자동 검사 실패 시 Seed 10, 42로 재시도하며, 모두 실패하거나 음성인식 검사를 사용할 수 없으면 완료 음성을 제공하지 않습니다. Qwen은 웹에서 비교용으로 선택할 수 있습니다.
+
+
+새 MCP 도구·기록·취소·편집 출력은 [LAN 연결 안내](lan-mcp-and-services.md)를 참고하세요.

@@ -878,6 +878,9 @@ class Service:
             "seed": request["seed"],
             "segment_count": request["segment_count"],
             "completed_segments": request["completed_segments"],
+            "queued_segments": request.get("queued_segments", 0),
+            "running_segments": request.get("running_segments", 0),
+            "jobs_ahead": request.get("jobs_ahead", 0),
             "duration_seconds": request.get("duration_seconds"),
             "error": request.get("error"),
             "created_at": request["created_at"],
@@ -893,6 +896,52 @@ class Service:
             "status_url": f"/v1/tts/{request_id}",
             "audio_url": f"/v1/tts/{request_id}/audio" if succeeded else None,
         }
+
+    def external_tts_history(self, limit: int = 20, before_id: int = 0, status: str = '') -> dict:
+        if not 1 <= limit <= 100 or before_id < 0:
+            raise ValueError('limit must be 1–100; before_id must be non-negative.')
+        if status and status not in {'queued', 'running', 'succeeded', 'failed', 'cancelled'}:
+            raise ValueError('Unknown request status.')
+        rows = self.db.fetch_all(
+            """SELECT id FROM studio_requests WHERE source='external_api'
+               AND (?=0 OR id<?) AND (?='' OR status=?) ORDER BY id DESC LIMIT ?""",
+            (before_id, before_id, status, status, limit + 1))
+        items = [self.external_tts_request(row['id']) for row in rows[:limit]]
+        return {'jobs': items, 'next_before_id': items[-1]['id'] if len(rows) > limit else None}
+
+    def external_editing_export(self, request_id: int) -> dict:
+        """Portable editing manifest; whole-script cue, not word-aligned subtitles."""
+        import wave
+        request = self.external_tts_request(request_id)
+        if request['status'] != 'succeeded':
+            raise ValueError('Wait until the request succeeds before exporting.')
+        studio = self.studio_request(request_id)
+        output = self.external_tts_audio_path(request_id)
+        with wave.open(str(output), 'rb') as audio:
+            duration = audio.getnframes() / audio.getframerate()
+            audio_format = {'sample_rate': audio.getframerate(), 'channels': audio.getnchannels(),
+                            'sample_width_bytes': audio.getsampwidth()}
+        # A whole-script cue is valid for existing files too and never invents
+        # sentence/word alignment from raw segment durations after silence trimming.
+        cue = {'index': 1, 'start_seconds': 0, 'end_seconds': duration,
+               'text': studio['original_text']}
+        def timestamp(seconds):
+            milliseconds = round(seconds * 1000)
+            hours, milliseconds = divmod(milliseconds, 3600000)
+            minutes, milliseconds = divmod(milliseconds, 60000)
+            seconds, milliseconds = divmod(milliseconds, 1000)
+            return f'{hours:02}:{minutes:02}:{seconds:02},{milliseconds:03}'
+        subtitle = f"1\n00:00:00,000 --> {timestamp(duration)}\n{studio['original_text']}\n"
+        rows = self.db.fetch_all(
+            'SELECT position,text,paragraph_index,semantic_role FROM studio_segments WHERE request_id=? ORDER BY position',
+            (request_id,))
+        return {'schema_version': 1, 'request_id': request_id, 'voice_id': request.get('voice_id'),
+                'audio_url': request['audio_url'], 'duration_seconds': duration, 'audio_format': audio_format,
+                'original_text': studio['original_text'], 'spoken_segments': rows,
+                'chapters': request['chapters'], 'quality_control': request['quality_control'],
+                'subtitle_timing': 'whole_script', 'word_aligned': False,
+                'subtitle_note': '전체 대본 자막입니다. 문장·단어별 자막은 편집 서비스에서 정렬하세요.',
+                'cues': [cue], 'srt': subtitle}
 
     def external_tts_audio_path(self, request_id: int) -> Path:
         self.external_tts_request(request_id)

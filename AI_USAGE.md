@@ -4,19 +4,13 @@
 
 ## 연결 정보
 
-- Base URL: `https://explicit-silliness-ceramics.ngrok-free.dev`
+- Base URL: `http://192.168.0.58:8766`
 - 인증 방식: HTTP Bearer token
 - API 키 전달: `Authorization: Bearer <VOICEBENCH_API_KEY>`
 - 기본 Seed: `13` (외부 입력은 받지 않으며, 전달되어도 무시됨)
-- 결과 형식: 24kHz, mono, PCM WAV
+- 결과 형식: 엔진에 따라 24kHz 또는 44.1kHz, mono, PCM WAV
 
 `VOICEBENCH_API_KEY`의 실제 값은 저장소에 포함되지 않는다. 사용자에게 별도로 받거나 로컬 PC에서 `show-api-key.cmd`를 실행해 확인해야 한다. 웹 관리자 비밀번호를 API 인증에 사용하지 않는다.
-
-ngrok 안내 페이지를 우회하기 위해 모든 API 요청에 다음 헤더를 추가한다.
-
-```http
-ngrok-skip-browser-warning: VoiceBench API client
-```
 
 ## 에이전트 실행 절차
 
@@ -42,7 +36,6 @@ AI 에이전트는 다음 순서를 정확히 따른다.
 POST /v1/tts
 Authorization: Bearer <VOICEBENCH_API_KEY>
 Content-Type: application/json; charset=utf-8
-ngrok-skip-browser-warning: VoiceBench API client
 
 {
   "text": "안녕하세요. 외부 AI가 요청한 대본입니다."
@@ -73,7 +66,6 @@ ngrok-skip-browser-warning: VoiceBench API client
 ```http
 GET /v1/tts/10
 Authorization: Bearer <VOICEBENCH_API_KEY>
-ngrok-skip-browser-warning: VoiceBench API client
 ```
 
 완료 응답 예시:
@@ -114,7 +106,6 @@ ngrok-skip-browser-warning: VoiceBench API client
 ```http
 GET /v1/tts/10/audio
 Authorization: Bearer <VOICEBENCH_API_KEY>
-ngrok-skip-browser-warning: VoiceBench API client
 ```
 
 응답 본문을 `.wav` 파일로 저장한다. 오디오 요청은 HTTP Range를 지원한다.
@@ -122,10 +113,9 @@ ngrok-skip-browser-warning: VoiceBench API client
 ## curl 예제
 
 ```bash
-curl -X POST "https://explicit-silliness-ceramics.ngrok-free.dev/v1/tts" \
+curl -X POST "http://192.168.0.58:8766/v1/tts" \
   -H "Authorization: Bearer $VOICEBENCH_API_KEY" \
   -H "Content-Type: application/json; charset=utf-8" \
-  -H "ngrok-skip-browser-warning: VoiceBench API client" \
   -d '{"text":"안녕하세요. API 음성 생성 요청입니다."}'
 ```
 
@@ -136,7 +126,7 @@ curl -X POST "https://explicit-silliness-ceramics.ngrok-free.dev/v1/tts" \
 ```powershell
 $env:VOICEBENCH_API_KEY = '<사용자에게 받은 API 키>'
 python tools\external_tts_client.py `
-  --base-url 'https://explicit-silliness-ceramics.ngrok-free.dev' `
+  --base-url 'http://192.168.0.58:8766' `
   --text '읽을 대본' `
   --output result.wav
 ```
@@ -155,8 +145,8 @@ python tools\external_tts_client.py `
 - 동일 조건의 실행 중 작업과 최근 24시간 내 완료 작업은 자동으로 재사용한다.
 - 동시 대기·실행 가능한 외부 작업은 최대 4개이다.
 - 생성 요청은 분당 최대 10개이다.
-- PC, VoiceBench 서버, ngrok이 실행 중일 때만 API를 사용할 수 있다.
-- API 키로는 음성 생성, 해당 외부 요청의 상태 확인, WAV 다운로드만 가능하다.
+- VoiceBench Studio와 LAN 게이트웨이가 실행 중일 때 API를 사용할 수 있다.
+- 공통 API 키로 목소리 선택, 생성, 외부 작업 조회·취소, 다운로드 및 편집 출력이 가능하다.
 - 프로젝트, 레퍼런스 음성, 벤치마크, 관리자 화면에는 API 키로 접근할 수 없다.
 
 ## AI 에이전트용 요약 지시문
@@ -176,3 +166,6 @@ failed 또는 cancelled이면 error를 보고한다.
 
 
 2026-09-26: 기본 엔진은 ZONOS2이며 기존 본인 목소리와 Seed 13을 유지합니다. 240자 이하 대본은 한 번에 생성합니다. HQ 자동 검사 실패 시 Seed 10, 42로 재시도하며, 모두 실패하거나 음성인식 검사를 사용할 수 없으면 완료 음성을 제공하지 않습니다. Qwen은 웹에서 비교용으로 선택할 수 있습니다.
+
+
+현재 LAN MCP와 새 도구·기록·취소·편집 출력은 [LAN 연결 안내](docs/lan-mcp-and-services.md)에서 확인하세요.

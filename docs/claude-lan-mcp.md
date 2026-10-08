@@ -1,5 +1,8 @@
 # Claude Desktop LAN MCP 연결
 
+> 현재 권장 방식은 Studio를 로컬에 두고 `mcp-lan.cmd`로 8766 게이트웨이를 실행하는 방식입니다. 새 도구 11개와 HTTP MCP 연결은 [최신 LAN 연결 안내](lan-mcp-and-services.md)를 참고하세요. 아래 8765 호스팅 방식은 기존 방식이며 계속 사용할 수 있습니다.
+
+
 이 구성은 GPU가 있는 **VoiceBench PC**에서 음성을 합성하고, 같은 사설망의 **Claude Desktop PC**가 MCP 도구로 요청하는 방식이다. ngrok이나 인터넷 공개는 사용하지 않는다.
 
 ## 1. VoiceBench PC: LAN 서비스 시작

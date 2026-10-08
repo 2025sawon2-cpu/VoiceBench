@@ -44,8 +44,13 @@ def download_audio(url: str, api_key: str, output: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Create speech through VoiceBench External TTS API")
-    parser.add_argument("--base-url", required=True, help="For example: https://example.ngrok-free.dev")
-    parser.add_argument("--text", required=True)
+    parser.add_argument("--base-url", required=True, help="For example: http://192.168.0.58:8766")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--text")
+    source.add_argument('--request-id', type=int, help='Resume an existing request without resubmitting')
+    parser.add_argument('--voice-id', help='Official voice ID; omit for personal default')
+    parser.add_argument('--generation-key', default='')
+    parser.add_argument('--editing-export', action='store_true', help='Save JSON manifest and whole-script SRT next to WAV')
     parser.add_argument("--output", type=Path, default=Path("voicebench-result.wav"))
     parser.add_argument("--poll-seconds", type=float, default=5.0)
     arguments = parser.parse_args()
@@ -55,13 +60,15 @@ def main() -> None:
         raise SystemExit("Set VOICEBENCH_API_KEY before running this client.")
 
     base_url = arguments.base_url.rstrip("/")
-    created, _ = api_request(
-        f"{base_url}/v1/tts",
-        api_key,
-        {"text": arguments.text},
-    )
-    request_id = int(created["id"])
-    print(f"VoiceBench request {request_id} queued.")
+    if arguments.request_id is not None:
+        if arguments.request_id < 1:
+            raise SystemExit('request-id must be positive')
+        request_id = arguments.request_id
+    else:
+        created, _ = api_request(f"{base_url}/v1/tts", api_key,
+            {"text": arguments.text, 'voice_id': arguments.voice_id, 'generation_key': arguments.generation_key})
+        request_id = int(created["id"])
+    print(f"VoiceBench request {request_id}; keep this ID to resume.")
 
     while True:
         status, _ = api_request(f"{base_url}/v1/tts/{request_id}", api_key)
@@ -77,6 +84,11 @@ def main() -> None:
 
     download_audio(f"{base_url}{status['audio_url']}", api_key, arguments.output)
     print(f"Saved {arguments.output.resolve()}")
+    if arguments.editing_export:
+        manifest, _ = api_request(f'{base_url}/v1/tts/{request_id}/export', api_key)
+        arguments.output.with_suffix('.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
+        arguments.output.with_suffix('.srt').write_text(manifest['srt'], encoding='utf-8-sig')
+        print('Saved editing manifest and whole-script SRT (not word-aligned).')
 
 
 if __name__ == "__main__":

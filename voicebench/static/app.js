@@ -302,6 +302,16 @@ function switchView(name) {
   $$('.view').forEach(node => node.classList.toggle('active', node.id === `${name}-view`));
   $('#page-title').textContent = ({studio:'음성 만들기',voices:'목소리 보관함',history:'생성 기록',connect:'자동화 연결',workspace:'비교 실험',review:'블라인드 비교',engines:'모델 관리'})[name];
   if (name === 'review') { loadComparison(); renderScores(); }
+  if (name === 'connect') loadIntegrations();
+}
+
+async function loadIntegrations() {
+  try {
+    const info = await api('/api/integrations');
+    $('#lan-mcp-url').textContent = info.mcp_url || 'VoiceBench MCP.cmd를 실행하면 주소가 표시됩니다.';
+    $('#lan-api-url').textContent = info.public_url || 'MCP 실행 후 확인';
+    $('#lan-default-engine').textContent = info.default_engine_slug;
+  } catch (error) { flash(error.message, true); }
 }
 
 function escapeHtml(value) {

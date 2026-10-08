@@ -112,6 +112,19 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
                 return self.send_json(self.server.service.state())
             if path == "/api/studio":
                 return self.send_json({**self.server.service.studio_state(), "ui_version": self.server.ui_version()})
+            if path == '/api/integrations':
+                session = self.server.paths.root / '.runtime/mcp-session.json'
+                public = None
+                if session.is_file():
+                    try:
+                        public = json.loads(session.read_text(encoding='utf-8')).get('public_url')
+                    except (OSError, ValueError):
+                        pass
+                return self.send_json({'public_url': public, 'mcp_url': public.rstrip('/') + '/mcp' if public else None,
+                                       'default_engine_slug': self.server.service.default_engine_slug,
+                                       'authentication': 'Bearer', 'per_pc_permissions': False})
+            if path == '/api/integrations/guide':
+                return self.send_file(self.server.paths.root / 'docs/lan-mcp-and-services.md', 'text/plain; charset=utf-8')
             match = re.fullmatch(r"/api/voice-catalog/([a-z0-9_-]+)/preview", path)
             if match:
                 audio = self.server.service.voice_preview_path(match.group(1))
@@ -321,6 +334,14 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
             self.send_error_json(error)
 
     def handle_external_get(self, path: str) -> None:
+        if path == '/v1/tts':
+            query = parse_qs(urlparse(self.path).query)
+            return self.send_json(self.server.service.external_tts_history(
+                int(query.get('limit', ['20'])[0]), int(query.get('before_id', ['0'])[0]),
+                query.get('status', [''])[0]))
+        export = re.fullmatch(r'/v1/tts/(\d+)/export', path)
+        if export:
+            return self.send_json(self.server.service.external_editing_export(int(export.group(1))))
         if path == '/v1/voices':
             return self.send_json(self.server.service.external_voice_catalog())
         voice_match = re.fullmatch(r'/v1/voices/([a-z0-9_-]+)/preview',path)
@@ -334,6 +355,10 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
                     "status": "ok",
                     "service": "VoiceBench External TTS API",
                     "active_requests": self.server.service.active_external_tts_count(),
+                    "queue": self.server.database.fetch_one(
+                        """SELECT COALESCE(SUM(CASE WHEN status='queued' THEN 1 ELSE 0 END),0) AS queued_jobs,
+                                  COALESCE(SUM(CASE WHEN status='running' THEN 1 ELSE 0 END),0) AS running_jobs
+                           FROM jobs WHERE status IN ('queued','running')"""),
                     **self.server.service.synthesis_readiness(),
                 }
             )
@@ -362,6 +387,13 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
         self.send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
 
     def handle_external_post(self, path: str) -> None:
+        cancel = re.fullmatch(r'/v1/tts/(\d+)/cancel', path)
+        if cancel:
+            self.read_json()
+            request_id = int(cancel.group(1))
+            self.server.service.external_tts_request(request_id)
+            self.server.service.cancel_studio_request(request_id)
+            return self.send_json(self.server.service.external_tts_request(request_id))
         if path == "/v1/resources/release-idle":
             self.read_json()
             return self.send_json(self.server.release_idle_resources())
