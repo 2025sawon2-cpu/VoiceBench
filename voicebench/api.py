@@ -56,6 +56,33 @@ class VoiceBenchServer(ThreadingHTTPServer):
     def start(self) -> None:
         self.runner.start()
 
+    def release_idle_resources(self) -> dict[str, Any]:
+        """Release owned model workers only while every synthesis queue is idle.
+
+        Keep the write reservation through shutdown: runner claims and UI job
+        inserts must not race the empty-queue check. No voice settings change.
+        """
+        with self.external_request_lock:
+            with self.database.connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    jobs = connection.execute(
+                        "SELECT COUNT(*) FROM jobs WHERE status IN ('queued','running')"
+                    ).fetchone()[0]
+                    requests = connection.execute(
+                        "SELECT COUNT(*) FROM studio_requests WHERE status IN ('queued','running')"
+                    ).fetchone()[0]
+                    if jobs or requests:
+                        return {"status": "busy", "released": False,
+                                "active_jobs": jobs, "active_requests": requests}
+                    shutdown_workers()
+                    return {"status": "released", "released": True,
+                            "active_jobs": 0, "active_requests": 0}
+                finally:
+                    # This transaction exists only to guard the queue; it never
+                    # modifies jobs, engine configuration, or selected voices.
+                    connection.execute("ROLLBACK")
+
     def server_close(self) -> None:
         self.runner.stop()
         if self.runner.is_alive():
@@ -335,6 +362,9 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
         self.send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
 
     def handle_external_post(self, path: str) -> None:
+        if path == "/v1/resources/release-idle":
+            self.read_json()
+            return self.send_json(self.server.release_idle_resources())
         if path != "/v1/tts":
             return self.send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
         payload = self.read_json()

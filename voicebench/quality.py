@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .audio import inspect_wav
+from .korean_numbers import quantity_mismatches
 
 
 QUALITY_RETRY_SEEDS = (10, 42)
@@ -79,6 +80,7 @@ def evaluate_candidate(
         _adjacent_repetitions(transcription or "") - _adjacent_repetitions(expected_text)
     )
     reasons: list[str] = []
+    quantities = quantity_mismatches(expected_text, transcription or "")
 
     if wav_metrics.get("hard_reject"):
         reasons.append("waveform_reject")
@@ -96,6 +98,8 @@ def evaluate_candidate(
     ):
         reasons.append("excessive_silence")
     if transcription is not None and expected:
+        if quantities:
+            reasons.append("quantity_mismatch")
         if not actual:
             reasons.append("empty_transcription")
         elif len(expected) >= 8 and length_ratio < 0.55:
@@ -122,6 +126,8 @@ def evaluate_candidate(
         score += 0.08
     if repeated:
         score += 0.18
+    if quantities:
+        score += 1.0
     score += 0.5 * sum(
         reason
         in {
@@ -142,6 +148,7 @@ def evaluate_candidate(
         "adjacent_repetition": repeated,
         "retry_recommended": bool(reasons),
         "reasons": reasons,
+        "quantity_mismatches": quantities,
         "score": round(score, 4),
         "wav": wav_metrics,
     }

@@ -44,6 +44,14 @@ class LocalStudioSettingsTests(unittest.TestCase):
                 self.assertEqual(web['project_id'], external['project_id'])
                 self.assertEqual(service.studio_state()['default_engine_slug'], slug)
                 self.assertTrue(service.synthesis_readiness()['ready'])
+                self.assertEqual(service.synthesis_readiness()['default_voice_kind'],'personal')
+
+    def test_default_official_reference_is_not_reported_as_personal_clone(self):
+        with tempfile.TemporaryDirectory() as folder:
+            service=self.make_service(Path(folder))
+            service.upsert_engine({'slug':service.default_engine_slug,'name':'Official fixture','kind':'mock',
+                                   'config':{'reference_preset':'AmericanMale'}})
+            self.assertEqual(service.synthesis_readiness()['default_voice_kind'],'official')
 
     def test_missing_configured_engine_is_not_reported_ready_or_replaced(self):
         with tempfile.TemporaryDirectory() as folder:

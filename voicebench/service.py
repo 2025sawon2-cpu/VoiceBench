@@ -15,6 +15,7 @@ from .voices import catalog, public_catalog, controls, validate_generation, QWEN
 from .recordings import validate_voice_clip
 from .config import Paths, DEFAULT_STUDIO_ENGINE_SLUG, local_studio_engine
 from .db import Database
+from .korean_numbers import POLICY as NUMBER_POLICY, normalize_korean_quantities
 from .util import atomic_write_bytes, json_dumps, sha256_file, system_snapshot, utc_now
 
 
@@ -292,6 +293,7 @@ def supports_quality_control(slug: str) -> bool:
 def plan_studio_script(text: str, engine_slug: str) -> list[SpeechSegment]:
     # Keep Shorts in one model context. Long scripts retain bounded, semantic
     # segments; this is not a promise of cross-segment acoustic continuity.
+    text = normalize_korean_quantities(text)
     cleaned = re.sub(r"\s+", " ", text).strip()
     if engine_slug.startswith("zonos2-") and 0 < len(cleaned) <= 240:
         role = _sentence_role(cleaned, opening=True)
@@ -790,7 +792,8 @@ class Service:
             raise ValueError("합성할 대본을 입력하세요.")
         voice,project,engine = self.external_profile(voice_id)
         fingerprint_data = {
-            "version": 7,
+            "version": 8,
+            "number_policy": NUMBER_POLICY,
             "segmentation_policy": "zonos_shorts_whole_240_v1",
             "input_policy": STUDIO_INPUT_POLICY,
             "text": normalized,
@@ -1191,7 +1194,10 @@ class Service:
             errors.append("기본 레퍼런스 음성이 없습니다.")
         if engine and json.loads(engine["config_json"]).get("requires_reference_text") and not transcript:
             errors.append("기본 레퍼런스 대본이 없습니다.")
-        return {"ready": not errors, "default_engine_slug": self.default_engine_slug, "errors": errors}
+        config = json.loads(engine['config_json']) if engine else {}
+        kind = 'official' if self.default_engine_slug == QWEN_CUSTOM or config.get('reference_preset') or config.get('generation',{}).get('speaker') else 'personal'
+        return {"ready": not errors, "default_engine_slug": self.default_engine_slug,
+                "default_voice_kind": kind, "errors": errors}
 
     def studio_state(self) -> dict[str, Any]:
         reference, _, voice_name, _ = self.studio_reference(self.default_engine_slug)
