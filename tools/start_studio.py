@@ -1,5 +1,6 @@
 """Open the local standalone Studio, reusing an existing VoiceBench server."""
 import json
+import argparse
 import os
 from pathlib import Path
 import subprocess
@@ -19,13 +20,19 @@ def ready():
         return False
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--welcome', action='store_true')
+    args = parser.parse_args()
+    target = URL + ('/welcome.html' if args.welcome else '')
     if not ready():
         # Never replace a server already bound to this port, including protected ones.
         import socket
         with socket.socket() as probe:
             occupied = probe.connect_ex(('127.0.0.1', 8765)) == 0
         if occupied:
-            webbrowser.open(URL)
+            if args.welcome:
+                raise SystemExit('Port 8765 is occupied by an unverified or protected server. Start Studio separately after checking it.')
+            webbrowser.open(target)
             return
         runtime = ROOT / '.runtime'
         runtime.mkdir(exist_ok=True)
@@ -45,7 +52,9 @@ def main():
             time.sleep(0.5)
         else:
             raise SystemExit('Startup timed out. Check .runtime/studio-launch.log.')
-    webbrowser.open(URL)
+    if not webbrowser.open(target):
+        raise SystemExit('Could not open the default browser. Open ' + target)
+    print(target, flush=True)
 
 if __name__ == '__main__':
     main()

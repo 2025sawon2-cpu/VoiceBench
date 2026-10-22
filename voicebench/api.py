@@ -108,6 +108,10 @@ class VoiceBenchHandler(BaseHTTPRequestHandler):
             if not self.is_authorized():
                 return self.request_authentication()
             query = parse_qs(parsed.query)
+            if path == '/api/setup':
+                report = self.server.paths.root / '.runtime/setup-report.json'
+                return self.send_json(json.loads(report.read_text(encoding='utf-8')) if report.is_file()
+                                      else {'status': 'not_run', 'steps': [], 'samples': []})
             if path == "/api/state":
                 return self.send_json(self.server.service.state())
             if path == "/api/studio":

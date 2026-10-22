@@ -9,6 +9,20 @@ function filteredVoices(voices, query, gender, model, favoritesOnly, favorites) 
 }
 function renderVoiceGallery() {
   const voices = app.studio?.voice_catalog || [];
+  if (!gallery.entryApplied && voices.length) {
+    gallery.entryApplied = true;
+    const search = globalThis.location?.search || '';
+    const requested = search ? new URLSearchParams(search).get('voice') : null;
+    gallery.entryRequested = voices.some(v => v.id === requested && v.available);
+    const entry = voices.find(v => v.id === requested && v.available)
+      || (!app.voiceId && !app.voiceManuallyCleared && !voices.some(v => v.kind === 'personal' && v.available)
+        ? voices.find(v => v.id === 'qwen-sohee' && v.available) : null);
+    if (entry) {
+      app.voiceId = entry.id; app.voiceManuallyCleared = false;
+      $('#studio-engine').value = entry.engine_slug;
+      $('#studio-voice').value = entry.voice_project_id ? String(entry.voice_project_id) : '';
+    }
+  }
   if (!app.voiceId && !app.voiceManuallyCleared) app.voiceId = voices.find(v => v.id==='personal-zonos2')?.id;
   const models = [...new Set(voices.map(v => v.model))];
   const tabs = $('#voice-model-tabs');

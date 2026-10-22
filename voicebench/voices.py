@@ -109,7 +109,11 @@ def catalog(paths, db):
         for speaker,name,gender in [('sohee','부드러운 여성','female'),('aiden','밝은 남성','male')]:
             add('shared-'+key+'-'+speaker,name,FAMILIES[key][1],gender,'한국어 샘플',('소희를 바탕으로 만든 공용 여성 목소리' if speaker=='sohee' else '에이든을 바탕으로 만든 공용 남성 목소리'),'shared',folder/'previews'/('qwen-'+speaker+'.wav'),SAMPLE_TEXT)
     for p in db.fetch_all("SELECT * FROM projects WHERE description='voice-library:v1' ORDER BY id DESC"):
-        add('library-'+str(p['id']),p['name'],FAMILIES['zonos2'][1],'personal','사용자 녹음','등록한 원본 녹음','library',p['reference_path'] or '',p['reference_text'],voice_project_id=p['id'])
+        add('library-'+str(p['id']),p['name'],families['zonos2'][1],'personal','사용자 녹음','등록한 원본 녹음','library',p['reference_path'] or '',p['reference_text'],voice_project_id=p['id'])
+    for speaker,name,gender in [('sohee','Qwen 0.6B · 여성','female'),('aiden','Qwen 0.6B · 남성','male')]:
+        add('shared-qwen06-'+speaker,name,'qwen3-tts-06b-pascal',gender,'한국어 샘플',
+            '공용 합성 참조를 Qwen 0.6B로 복제한 비교 음성','shared',
+            folder/'previews'/('qwen-'+speaker+'.wav'),SAMPLE_TEXT)
     return rows
 
 def public_catalog(paths, db):

@@ -1,196 +1,139 @@
-# Windows 새 PC 설치 가이드
+# Windows 설치와 첫 음성 만들기
 
-> 2026-09-26: 운영 기본 모델은 ZONOS2입니다. 아래 Qwen 설치는 비교 엔진 및 Whisper 검사 환경에도 사용됩니다. ZONOS2는 추가로 `powershell -ExecutionPolicy Bypass -File .\install-fish-zonos.ps1 -Engine zonos2`를 실행해 설치·등록하세요. 기본 레퍼런스는 기존 본인 목소리입니다.
-
-이 문서는 새 Windows PC에서 저장소를 복제하고 VoiceBench의 Qwen3-TTS 1.7B 음성 복제 서비스를 설치하는 절차입니다. 모델, 생성 음성, 개인 레퍼런스 음성, 웹 비밀번호, 외부 API 키는 Git에 포함되지 않습니다.
-
-Hotpost·대본 작업실·auto_capcut까지 같은 PC에 설치할 때는 [네 저장소 통합 설치 순서](https://github.com/dkfdnd/insta_auto/blob/main/docs/windows-install.md)를 먼저 확인하세요. 각 프로젝트의 Python 환경은 서로 공유하지 않습니다. 기존 PC에서 선택한 엔진과 목소리도 로컬 DB·모델 설정에 있으므로 Git 복제만으로 새 PC에 선택되지 않습니다.
-
-## 1. 권장 환경
-
-- Windows 10/11 64비트
-- NVIDIA GPU와 최신 NVIDIA 드라이버
-- VRAM 8GB 이상 권장
-- 시스템 Python 3.10 64비트와 Python Launcher(`py.exe`)
-- Git for Windows
-- 저장소와 모델 캐시를 위한 여유 공간 12GB 이상
-
-현재 생산 설정은 GTX 1070 Ti 8GB에서 검증된 PyTorch 2.6.0, CUDA 12.6, FP16/eager 조합입니다. 다른 NVIDIA GPU에서도 설치할 수 있지만 성능과 최대 VRAM 사용량은 달라질 수 있습니다.
-
-설치 전 PowerShell에서 다음 명령이 동작하는지 확인합니다.
+저장소를 처음 받은 뒤 AI 에이전트에게 **“설치해”**라고 말하거나, VoiceBench 폴더에서 다음 명령을 실행하세요.
 
 ```powershell
-git --version
-py -3.10 --version
-nvidia-smi
-```
-
-## 2. 저장소 복제
-
-```powershell
-git clone <저장소-URL> VoiceBench
+git clone https://github.com/dkfdnd/VoiceBench.git
 cd VoiceBench
+.\setup-windows.cmd
 ```
 
-저장소 경로에는 가능하면 한글이나 특수문자가 없는 짧은 경로를 사용합니다. 예: `C:\VoiceBench`.
+설치는 **PC 진단 → 전체 모델 다운로드·등록 → 앱 검사 → 한국어 샘플 22개 생성·검사 → 웹 시작 화면 열기** 순서로 진행됩니다. 개인 녹음 없이 시작할 수 있습니다. 마지막에 표시되는 주소는 **http://127.0.0.1:8765/welcome.html**입니다.
 
-## 3. 자동 설치
+설치가 끝나면 소희부터 한국어 샘플을 순서대로 재생합니다. 브라우저가 자동 재생을 차단하면 **전체 샘플 듣기**를 한 번 눌러 주세요. 모델별 플레이어와 **이 목소리로 대본 읽기** 링크도 있습니다.
 
-모델까지 미리 받으려면 다음 명령을 실행합니다.
+## 설치 대상
+
+| 계열 | 다운로드·등록 대상 | 한국어 샘플 |
+|---|---|---|
+| Qwen3-TTS | 1.7B Base, 0.6B Base, 1.7B CustomVoice, 음성 토크나이저 | 공식 화자 9명 + Base 두 크기 각각 공용 남녀 2개 |
+| ZONOS2 | GPU 메모리에 맞춘 Q8 또는 Q4 GGUF, DAC, 화자 인코더, 공식 참조 음성, CUDA 서버 | 공식 참조 3개 |
+| VoxCPM2 | 2B 모델, 기본 10단계 및 HQ 20단계 프리셋 | HQ 공용 남녀 2개 |
+| Fish S2-Pro | 원본 BF16 모델 및 코덱 | 공용 남녀 2개 |
+| Chatterbox Multilingual V3 | V3 코드와 모델 | 공용 남녀 2개 |
+| 품질 검사 | Whisper Base | 한국어 샘플의 대본·파형 검사에 사용 |
+
+같은 가중치를 사용하는 비교 프리셋마다 중복 다운로드하지 않습니다. ZONOS2는 이 PC에 맞는 양자화 한 종류를 선택합니다. Mock A/B는 TTS 모델이 아니므로 음성 샘플 대상에서 제외합니다. 사용자가 꺼둔 모델과 감정 프리셋을 재활성화하지 않습니다.
+
+Fish S2-Pro는 연구·비상업 평가용입니다. 상업적으로 사용하려면 [Fish Audio 라이선스](https://github.com/fishaudio/fish-speech/blob/main/LICENSE)를 확인하세요.
+
+## PC에 맞는 선택
+
+- Windows 10/11 64비트와 NVIDIA CUDA GPU가 필요합니다. CPU 전용·AMD·Apple 실행은 현재 설치기의 지원 대상이 아닙니다.
+- Git for Windows가 필요합니다. Python 3.10이 없으면 `winget`으로 현재 사용자용 설치를 시도합니다. `winget`이 없거나 설치에 실패하면 [Python 3.10](https://www.python.org/downloads/windows/) 64비트를 설치하고 같은 명령으로 다시 시작하세요.
+- 처음 전체 설치에는 **여유 공간 80GB 이상**을 확보하세요. 여러 격리 환경·모델·빌드 도구를 위한 설치 전 검사값이며 실제 사용량을 보장하는 수치는 아닙니다. 재시도 시 최소 10GB를 요구하며 추가 다운로드 공간은 더 필요할 수 있습니다.
+- 모든 계열을 비교하려면 **VRAM 16GB급, RAM 32GB급 이상**이 편리합니다. 작은 GPU에도 설치를 시도하지만 특히 Fish는 메모리 부족으로 실제 합성이 실패할 수 있습니다. 작은 GPU에서 모든 모델의 동작을 보장하지 않습니다.
+- GPU 이름을 추측하지 않고 `nvidia-smi`의 compute capability와 VRAM을 읽습니다. GPU가 여러 개면 지원 GPU 중 VRAM이 가장 큰 것을 선택합니다.
+- Qwen/VoxCPM2/Chatterbox는 기존 GPU에 PyTorch 2.6/CUDA 12.6, Blackwell 계열(SM100~120)에 PyTorch 2.8/CUDA 12.8을 선택합니다. Fish/ZONOS2 브리지는 PyTorch 2.8을 사용합니다. 설치 후 실제 CUDA 행렬 연산으로 드라이버·커널 동작을 검사합니다.
+- ZONOS2는 VRAM 12GB 이상이면 Q8, 미만이면 Q4를 다운로드합니다. 고정 SM89 대신 감지한 GPU의 SM 번호로 CUDA 서버를 빌드하며 DAC는 CPU에서 실행합니다. MSVC·SDK·CUDA 빌드 도구는 저장소 내부에 준비합니다.
+- BF16을 하드웨어로 지원하지 않는 GPU에서는 Fish/VoxCPM2의 합성이 실패할 수 있음을 표시합니다. 임의로 품질 설정을 바꾸어 성공한 것처럼 처리하지 않습니다.
+
+설치 전 진단만 하려면:
 
 ```powershell
-.\setup-windows.cmd -DownloadModels
+.\setup-windows.cmd -Plan
 ```
 
-이 명령은 다음 작업을 수행합니다.
-
-1. `.venv`에 VoiceBench용 Python 환경 생성
-2. `.runtime\engines\qwen3-tts\venv`에 독립된 TTS 환경 생성
-3. PyTorch 2.6.0 CUDA 12.6 및 `qwen-tts==0.1.1` 설치
-4. Qwen3-TTS 1.7B 표현형 기본 엔진과 비교용 엔진 등록
-5. `-DownloadModels` 사용 시 Qwen3-TTS 1.7B 및 Whisper Base 다운로드
-6. 전체 회귀 테스트 실행
-
-모델 다운로드를 생략하면 설치는 빨리 끝나지만 첫 음성 생성 시 Qwen 모델을 자동으로 내려받습니다. Whisper Base가 없으면 서비스는 실행되지만 자동 발음 검사가 파형 검사만으로 축소됩니다.
-
-이 명령은 **Qwen 환경**을 설치합니다. 현재 다른 PC에서 쓰는 ZONOS2나 Hotpost의 공식 남녀 목소리는 별도 준비가 필요합니다. Qwen CustomVoice와 ZONOS2 공식 목소리의 PC별 절차는 [Hotpost 목소리 가이드](hotpost-voices.md)를 따르세요. ZONOS2의 기본 설치는 Q8 가중치와 CUDA `SM89` 빌드를 전제로 합니다. GPU가 다르거나 VRAM이 8GB라면 이 기본값을 그대로 사용 가능하다고 가정하지 마세요. 기존 GTX 1070 Ti 8GB PC는 별도 Q4_K 가중치와 `SM61` 빌드로 운영했습니다. 새 PC의 GPU·메모리에 맞는 가중치와 SM 번호를 정한 뒤 설치·합성 시험을 해야 합니다.
-
-## 4. 개인 레퍼런스 음성 설치
-
-Git 저장소에는 개인 음성을 넣지 않습니다. 기존 PC에서 다음 두 파일을 안전한 방법으로 새 PC에 복사합니다.
-
-```text
-selected_reference.wav
-selected_reference.txt
-```
-
-텍스트 파일에는 WAV에서 실제로 말한 문장을 UTF-8로 정확히 기록해야 합니다. 현재 선택된 레퍼런스는 약 9.95초 길이의 24kHz mono PCM WAV입니다.
-
-설치 명령에서 파일을 바로 지정할 수 있습니다.
+GPU를 직접 지정하려면:
 
 ```powershell
-.\setup-windows.cmd -DownloadModels `
-  -ReferenceWav "D:\VoiceBackup\selected_reference.wav" `
-  -ReferenceText "D:\VoiceBackup\selected_reference.txt"
+nvidia-smi
+.\setup-windows.cmd -GpuIndex 1
 ```
 
-이미 엔진 설치를 마쳤다면 아래 위치에 직접 복사해도 됩니다.
+새로 등록되는 모델에는 선택 GPU가 저장됩니다. 기존 모델의 GPU와 생성 설정은 보존됩니다. 기존 환경을 다른 GPU로 옮기는 작업은 설정 검토가 필요합니다.
 
-```text
-data\prepared\ref_voice\selected_reference.wav
-data\prepared\ref_voice\selected_reference.txt
-```
+## 완료·실패·재시도
 
-`data\`는 `.gitignore`에 포함되어 Git에 업로드되지 않습니다.
+설치에는 대용량 다운로드와 ZONOS2 컴파일, 모델별 실제 합성이 포함되어 오래 걸릴 수 있습니다. 설치 터미널에 현재 단계와 진행 로그가 표시됩니다. 외부 다운로드 서버 상태에 따라 소요 시간은 달라집니다.
 
-## 5. 로컬 실행
+**전체 설치 단계와 한국어 샘플 22개가 모두 통과해야 완료(종료 코드 0)**입니다. 특정 모델 설치나 합성이 실패해도 다른 모델은 계속 준비합니다. 시작 화면에는 실패한 단계와 재생 가능한 샘플을 표시하며, 일부 실패는 종료 코드 1로 보고합니다. 실패한 모델을 지원 목록에서 조용히 빼지 않습니다.
+
+- 설치 요약: `.runtime/setup-report.json`
+- 샘플별 결과: `data/voice-gallery/preparation-report.json`
+- 생성 샘플: `data/voice-gallery/previews/`
+- 모델 작업자 로그: `.runtime/logs/`
+- 서버 시작 로그: `.runtime/studio-launch.log`
+
+같은 명령을 다시 실행하면 다운로드 캐시와 해시·설정·한국어 검사를 통과한 샘플을 재사용합니다. 기존 개인 녹음·대본·API 키·선택 모델·프리셋은 보존합니다. 이전에 수동으로 비활성화한 모델은 그대로 두며 전체 준비 완료로 표시하지 않습니다.
+
+설치와 합성이 충돌하지 않도록 서버/작업자 포트 8765·8790·8791 또는 대기/실행 작업이 있으면 시작 전에 중단합니다. 작업이 끝났는지 확인하고 이 VoiceBench의 서버와 작업자를 정상 종료한 뒤 재시도하세요. 다른 앱의 프로세스는 종료하지 마세요. 설치는 한 번에 하나만 실행할 수 있습니다.
+
+자동 서버 실행과 브라우저 열기 없이 준비만 하려면 `-NoBrowser`를 사용합니다. 기존 `-DownloadModels`도 호환되지만 이제 다운로드는 기본이므로 생략해도 같습니다.
+
+## 보이스 클로닝: 내 목소리로 새 문장 읽기
+
+보이스 클로닝은 짧은 녹음의 음색과 말투를 참고해 새 대본을 읽는 기능입니다. 별도 학습은 필요하지 않으며, 녹음 품질과 모델에 따라 유사성이 달라집니다. 처음에는 웹 시작 화면의 공용 목소리로 동작을 확인한 뒤 내 녹음을 등록하세요.
+
+1. **조용한 곳에서 녹음합니다.** 처음에는 10~20초가 편합니다. 한 사람만 말하고 음악·울림·큰 잡음이 없는 구간을 준비하세요. 본인 또는 사용 허락을 받은 목소리를 사용합니다.
+2. **목소리 보관함을 엽니다.** 이름과 WAV·MP3·M4A 등의 파일을 선택합니다. 브라우저가 읽을 수 있는 파일, 최대 30MB·5분을 받습니다.
+3. **3~30초 구간을 고릅니다.** 문장 끝이 잘리지 않게 지정하고 ‘구간 적용 · 미리듣기’를 누릅니다. 선택 구간을 자동으로 24kHz 모노 PCM16 WAV로 바꿉니다. 원본 파일은 바꾸지 않습니다.
+4. **녹음 대본을 확인합니다.** ‘녹음 대본 자동 인식’ 후 잘못 인식한 부분을 수정합니다. 여기에 적는 것은 새로 읽힐 문장이 아니라 **녹음에서 실제 말한 내용**입니다. 인식이 실패하면 직접 적어도 됩니다.
+5. **목소리를 등록합니다.** 사용 권한을 확인하고 등록 버튼을 누릅니다.
+6. **새 대본을 읽힙니다.** ‘음성 만들기 → 목소리 변경 · 미리듣기 → 내 목소리’에서 등록한 목소리를 선택합니다. 한두 문장의 새 대본으로 먼저 생성해 보고, 결과를 재생하거나 WAV로 저장하세요.
+
+녹음 예시:
+
+> 안녕하세요. 오늘은 제 목소리로 이야기를 들려드리려고 합니다. 편안한 속도로 또박또박 읽고 있어요. 새로운 문장도 자연스럽게 전해지면 좋겠습니다.
+
+‘원본 미리듣기’는 내가 등록한 녹음입니다. ‘한국어 샘플’은 해당 모델이 생성한 음성입니다. 내 목소리 복제 결과는 새 대본으로 생성해서 확인해야 합니다.
+
+Qwen CustomVoice 공식 화자와 고정 공식 목소리 프리셋에는 개인 녹음을 적용할 수 없습니다. ZONOS2 개인 복제 또는 Qwen Base 같은 복제 모델을 사용하세요. 결과가 어색하면 잡음이 적은 다른 구간과 정확한 대본으로 다시 등록해 비교하세요. 자동 검사는 사람의 음색 선호나 자연스러움을 보증하지 않습니다.
+
+## 기존 개인 기본 목소리 가져오기
+
+개인 목소리 파일은 Git에 없습니다. 외부 자동화 API에도 개인 목소리를 기본으로 쓰려면 기존 PC에서 WAV와 정확한 대본을 안전하게 가져올 수 있습니다.
 
 ```powershell
-.\start.cmd
+.\setup-windows.cmd -ReferenceWav "D:\VoiceBackup\selected_reference.wav" -ReferenceText "D:\VoiceBackup\selected_reference.txt"
 ```
 
-브라우저에서 `http://127.0.0.1:8765`를 엽니다. 첫 요청은 모델을 GPU에 올리기 때문에 이후 요청보다 오래 걸립니다.
+3~30초 PCM16 WAV와 UTF-8 대본을 검증한 뒤 `data/prepared/ref_voice/`에 설치합니다. 이미 다른 개인 음성이 있으면 덮어쓰지 않습니다. 웹 보관함에 새 항목으로 등록하세요. 웹에서 선택한 목소리는 외부 API의 개인 기본 목소리를 자동으로 바꾸지 않습니다.
 
-### Hotpost 연동용 로컬 API 키 준비
+새 PC는 개인 기본 목소리 없이도 공식·공용 목소리로 웹 합성을 시작할 수 있습니다. 이때 개인 기본 목소리를 사용하는 외부 `/v1/tts`는 아직 준비되지 않은 상태일 수 있습니다. 공식 목소리는 `/v1/voices`에서 승인된 `voice_id`를 명시해 호출합니다.
 
-위 `start.cmd`는 단독 화면 확인용입니다. Hotpost의 `start-local.cmd`는 VoiceBench의 `.runtime\external-api-key.txt`가 **먼저 존재해야** 인증된 음성 API를 시작할 수 있습니다. 단독 서버를 실행 중이었다면 정상 종료한 뒤, PowerShell에서 아래 명령을 한 번 실행하세요. 웹 비밀번호를 입력하면 로컬 전용 서버와 PC별 API 키가 준비됩니다. 관리자 권한·LAN 공개는 필요하지 않습니다.
+## 다음 실행과 업데이트
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\host.ps1 -BindAddress 127.0.0.1 -NoTunnel -Background
-```
+설치 다음부터는 `Start-Studio.cmd`를 더블클릭합니다. 실행 중인 서버는 재사용하며 없으면 백그라운드에서 시작합니다. 기본 작업실 주소는 **http://127.0.0.1:8765**입니다. ‘처음 사용 · 설치 결과’ 메뉴로 샘플과 클로닝 안내를 다시 볼 수 있습니다.
 
-`host.ps1`은 기존 키가 있으면 재사용하고 없으면 `.runtime\external-api-key.txt`에 생성합니다. 실행 중인 서버는 Hotpost 통합 시작 스크립트가 재사용합니다. 키를 채팅·설정 문서·Git에 복사하지 마세요. 새 PC에서 키를 새로 생성했다면 Hotpost도 **그 PC의** VoiceBench 폴더를 바라보게 합니다. 연결 점검은 `http://127.0.0.1:8775/api/production-health`에서 확인합니다.
-
-## 6. 같은 LAN에서 사용
-
-관리자 권한 PowerShell에서 실행합니다.
-
-```powershell
-.\host-lan.cmd
-```
-
-8자 이상의 웹 비밀번호를 입력하면 TCP 8765에 대해 개인 네트워크·로컬 서브넷만 허용하는 Windows 방화벽 규칙을 만들고 백그라운드 서버를 시작합니다.
-
-새 PC의 LAN 주소는 다음 명령으로 확인합니다.
-
-```powershell
-ipconfig
-```
-
-다른 기기에서는 `http://<새-PC의-IPv4-주소>:8765`로 접속합니다. 로그인 사용자 이름은 `voice`입니다.
-
-서버 종료:
-
-```powershell
-.\stop-hosting.cmd
-```
-
-## 7. 외부 API와 MCP
-
-인증된 로컬 `host.ps1` 또는 LAN `host-lan.cmd`를 처음 실행하면 외부 API 키가 다음 로컬 파일에 생성됩니다.
-
-```text
-.runtime\external-api-key.txt
-```
-
-키는 Git에 포함되지 않습니다. 확인 명령:
-
-```powershell
-.\show-api-key.cmd
-```
-
-Claude Desktop MCP 연결은 [claude-lan-mcp.md](claude-lan-mcp.md), HTTP API는 [external-api.md](external-api.md)를 참고합니다. MCP를 다른 PC에 연결할 때는 새 서버의 LAN 주소와 새로 생성된 API 키를 사용합니다.
-
-## 8. 설치 확인
-
-```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
-```
-
-웹 Studio에서 짧은 한국어 문장으로 첫 합성을 실행한 뒤 다음을 확인합니다.
-
-- 엔진: `Qwen3-TTS 1.7B · 표현형 T1.0/P0.95`
-- Seed: 13
-- 품질 모드: `long_form_hq`
-- 결과 파일: `data\artifacts\studio\request-<번호>.wav`
-
-## 9. 업데이트
-
-서버를 종료한 뒤 다음 명령을 실행합니다.
+업데이트는 작업이 끝난 뒤 서버를 정상 종료하고 실행합니다.
 
 ```powershell
 git pull
 .\setup-windows.cmd
 ```
 
-`.venv`, `.runtime`, `data`는 유지됩니다. 의존성이나 모델 설치 사양이 바뀐 업데이트에서는 `setup-windows.cmd`가 필요한 패키지를 다시 확인합니다.
+`.venv/`, `.runtime/`, `data/`는 Git에서 제외됩니다. 모델·개인 음성·녹음·API 키를 커밋하지 마세요. 다른 PC에는 CUDA 가상환경이나 빌드 결과를 복사하기보다 새로 설치합니다.
 
-## 다른 PC로 작업 이전
+## LAN·Hotpost·MCP 연결
 
-Git에는 `.venv/`, `.runtime/`, `data/`가 없습니다. 개인 참조 `selected_reference.wav`·`selected_reference.txt`는 안전한 매체로 별도 이동하고, 엔진·모델·API 키는 새 PC에서 설치·생성하는 것이 기본입니다. 특히 GPU용 CUDA 빌드와 가상환경을 다른 PC에서 복사해 그대로 실행하지 마세요. 이전 합성 결과와 작업 이력까지 필요하면 기존 PC의 `data/`를 앱 종료 후 별도로 백업하고, 복원 후 파일 경로와 선택 엔진을 확인합니다. 두 PC의 작업 DB는 Git으로 동기화되지 않습니다.
+단독 설치에서는 로컬 브라우저만 엽니다. LAN 공개나 API 키 발급은 별도 연결 작업입니다.
+
+- 같은 PC의 Hotpost 연동용 키와 인증 서버: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\host.ps1 -BindAddress 127.0.0.1 -NoTunnel -Background`
+- LAN 웹 공개: 관리자 PowerShell에서 `.\host-lan.cmd`. 웹 비밀번호를 설정하며 방화벽은 로컬 서브넷으로 제한합니다.
+- MCP·HTTP 연결: [LAN MCP 및 서비스 안내](lan-mcp-and-services.md)
+- 공식 화자 API 사용: [Hotpost 목소리 안내](hotpost-voices.md)
+- 외부 API: [HTTP API 문서](external-api.md)
+- 여러 저장소 통합 설치: [Hotpost 통합 가이드](https://github.com/dkfdnd/insta_auto/blob/main/docs/windows-install.md)
+
+실행 중인 단독 서버와 인증 서버를 중복 시작하지 마세요. 키는 `.runtime/external-api-key.txt`에 로컬 보관하고 채팅·Git·문서에 복사하지 않습니다.
 
 ## 문제 해결
 
-### `py.exe`를 찾을 수 없음
-
-python.org의 Python 3.10 64비트 설치 프로그램에서 Python Launcher를 포함해 설치합니다.
-
-### CUDA를 사용할 수 없음
-
-`nvidia-smi`가 정상 동작하는지 확인하고 NVIDIA 드라이버를 업데이트합니다. 이 프로젝트는 CPU 음성 생성을 지원하지 않습니다.
-
-### Studio에서 레퍼런스 음성을 찾지 못함
-
-두 레퍼런스 파일의 이름과 위치를 확인합니다. WAV와 TXT가 모두 있어야 합니다.
-
-### 첫 실행이 오래 걸림
-
-모델을 미리 받지 않았다면 첫 요청에서 수GB의 모델을 다운로드합니다. 다운로드 중에는 서버 오류 로그와 네트워크 상태를 확인합니다.
-
-### 포트 8765가 이미 사용 중
-
-다른 VoiceBench 서버를 먼저 종료하거나 다른 포트를 지정합니다.
-
-```powershell
-.\start.cmd -Port 8877
-```
+- **드라이버/CUDA 검사 실패**: NVIDIA 드라이버를 업데이트하고 재시도하세요. 설치기가 드라이버를 자동 교체하지는 않습니다.
+- **메모리 부족**: 다른 GPU 작업을 마친 뒤 재시도하세요. VRAM이 작으면 일부 모델의 사용이 불가능할 수 있으며 실패를 완료로 표시하지 않습니다.
+- **모델 다운로드 실패**: 네트워크와 디스크 여유를 확인하고 같은 설치 명령을 실행하세요. 기존 캐시를 지울 필요는 없습니다.
+- **ZONOS2 빌드 실패**: 설치 로그와 `.runtime/toolchains`를 확인하세요. 지원되지 않는 신형 GPU는 고정 도구 버전의 업데이트가 필요합니다.
+- **샘플 검사 실패**: 해당 모델은 준비 미완료입니다. 설치 로그의 모델 오류·ASR 오류를 확인하세요. Whisper Base가 없어도 완료로 처리하지 않습니다.
+- **브라우저에서 소리가 안 남**: ‘전체 샘플 듣기’나 각 플레이어의 재생 버튼을 누르고 브라우저·Windows 음량을 확인하세요.
+- **Python 자동 설치 실패**: Python 3.10 64비트를 수동 설치하고 터미널을 새로 연 뒤 재시도하세요.

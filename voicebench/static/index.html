@@ -26,6 +26,7 @@
         <button class="nav-item" data-view="review"><span>⇄</span> 블라인드 비교</button>
         <button class="nav-item" data-view="engines"><span>⚙</span> 모델 관리</button>
         <button class="nav-item" data-view="connect"><span>↗</span> 자동화 연결</button>
+        <a class="nav-item" href="/welcome.html"><span>?</span> 처음 사용 · 설치 결과</a>
       </nav>
       <div class="privacy-note"><span class="status-dot"></span><div><strong>완전 로컬</strong><small>파일을 외부로 전송하지 않습니다.</small></div></div>
     </aside>
@@ -70,7 +71,7 @@
       </section>
 
       <section id="voices-view" class="view">
-        <div class="section-intro"><h2>다시 쓰고 싶은 목소리를 모아두세요.</h2><p>깨끗한 녹음과 그 녹음의 대본을 등록하면 음성 만들기에서 선택할 수 있습니다.</p></div>
+        <div class="section-intro"><h2>다시 쓰고 싶은 목소리를 모아두세요.</h2><p>깨끗한 녹음과 그 녹음의 대본을 등록하면 음성 만들기에서 선택할 수 있습니다. <a href="/welcome.html#cloning">처음이라면 보이스 클로닝 안내 보기</a></p></div>
         <div class="grid two"><article class="card"><div class="card-heading"><h2>새 목소리 등록</h2><span class="tag">VOICE CLONING</span></div>
           <form id="voice-form" class="stack-form"><label>목소리 이름<input id="voice-name" maxlength="80" required placeholder="예: 내 목소리 · 차분한 낭독"></label><label>레퍼런스 녹음<input id="voice-file" type="file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg,.webm" required></label><p class="support">WAV·MP3·M4A 등 브라우저가 읽을 수 있는 음성 · 최대 30MB / 5분<br>배경 음악 없이 한 사람이 말하는 3~30초를 골라 주세요. WAV 규격은 자동으로 맞춥니다.</p><p id="clip-state" class="clip-state" role="status" aria-live="polite">녹음 파일을 선택하면 구간을 편집할 수 있어요.</p><div id="clip-editor" class="clip-editor hidden"><div class="clip-range"><label>시작 (초)<input id="clip-start" type="number" min="0" step="0.1" value="0"></label><label>끝 (초)<input id="clip-end" type="number" min="3" step="0.1" value="10"></label></div><audio id="clip-audio" controls preload="metadata"></audio><div class="clip-actions"><button type="button" id="clip-apply" class="ghost">구간 적용 · 미리듣기</button></div><p class="support">문장 중간이 잘리지 않도록 끝까지 들어보세요. 등록에는 적용한 구간만 사용합니다.</p></div><div class="transcript-actions"><button type="button" id="voice-transcribe" class="ghost" disabled>녹음 대본 자동 인식</button><span class="support">로컬 한국어 인식 · 결과를 확인하고 수정해 주세요.</span></div><label>녹음에서 읽은 문장<textarea id="voice-transcript" required placeholder="녹음에 들리는 문장을 정확히 입력하세요."></textarea></label><label class="consent"><input id="voice-consent" type="checkbox" required> 본인 또는 사용 허락을 받은 목소리입니다.</label><button id="voice-submit" class="primary" type="submit">목소리 등록</button></form></article>
           <article class="card"><div class="card-heading"><h2>목소리 보관함</h2></div><div id="voice-library"></div><p class="support">자동화 API는 기존 본인 목소리를 계속 사용합니다. 여기서 등록한 목소리는 웹에서 선택해 사용합니다.</p></article></div>

@@ -16,6 +16,8 @@ function saveStudioSettings() {
 function restoreStudioSettings() {
   if (settingsRestored || !app.studio) return;
   settingsRestored = true;
+  // An explicit sample-page choice takes precedence over the previous tab session.
+  if (typeof gallery !== 'undefined' && gallery.entryRequested) return;
   try {
     const saved = JSON.parse(sessionStorage.getItem(sessionSettingsKey) || 'null');
     if (!saved || !app.studio.studio_engines.some(e=>e.slug===saved.engine)) return;

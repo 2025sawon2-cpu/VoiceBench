@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import random
 from pathlib import Path
 
@@ -30,7 +31,12 @@ def main() -> None:
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
 
-    model = ChatterboxMultilingualTTS.from_pretrained(device="cuda", t3_model="v3")
+    manifest = Path(__file__).resolve().parents[1] / '.runtime/engines/chatterbox-v3/model.json'
+    if manifest.is_file():
+        model = ChatterboxMultilingualTTS.from_local(
+            json.loads(manifest.read_text(encoding='utf-8'))['path'], device='cuda', t3_model='v3')
+    else:
+        model = ChatterboxMultilingualTTS.from_pretrained(device="cuda", t3_model="v3")
     with torch.inference_mode():
         audio = model.generate(
             args.text,

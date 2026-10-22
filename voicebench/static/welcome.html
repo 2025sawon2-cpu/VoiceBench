@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VoiceBench · 처음 시작하기</title>
+  <link rel="stylesheet" href="/welcome.css">
+</head>
+<body>
+<main>
+  <header><a class="brand" href="/">V <span>VoiceBench</span></a><a href="/">음성 작업실 열기 ↗</a></header>
+  <section class="hero">
+    <p class="eyebrow">나의 PC에서 만드는 목소리</p>
+    <h1>먼저 들어보고,<br>내 목소리로 시작하세요.</h1>
+    <p>설치된 모델이 같은 한국어 문장을 읽어드립니다.<br>샘플을 고르거나, 짧은 녹음으로 나만의 목소리를 등록해 보세요.</p>
+    <div class="actions"><button id="play-all" disabled>▶ 전체 샘플 듣기</button><a class="button secondary" href="#cloning">내 목소리 만드는 방법</a></div>
+    <p id="playback-note" class="muted" role="status">설치 결과와 샘플을 확인하고 있습니다.</p>
+  </section>
+  <section class="panel" aria-labelledby="setup-heading">
+    <div class="section-title"><h2 id="setup-heading">설치 확인 중</h2><span id="sample-count" class="badge"></span></div>
+    <p id="hardware"></p><ul id="warnings"></ul>
+    <div id="steps" class="steps"></div>
+    <p id="retry" hidden>준비되지 않은 항목이 있습니다. 작업을 마치고 VoiceBench 서버를 종료한 뒤 <code>setup-windows.cmd</code>를 다시 실행하세요. 기존 다운로드와 검증된 샘플은 재사용합니다. 자세한 실패 원인은 설치 터미널에서 확인할 수 있습니다.</p>
+  </section>
+  <section aria-labelledby="samples-heading">
+    <div class="section-title"><h2 id="samples-heading">한국어로 들어보기</h2><span class="muted">재생에는 추가 합성이 필요하지 않아요</span></div>
+    <blockquote>“안녕하세요. 오늘은 일상 속 작은 이야기를 자연스럽게 들려드릴게요.”</blockquote>
+    <div id="samples" class="samples"></div>
+    <p class="muted">공식 화자와 공용 복제 목소리를 구분해 표시합니다. 공용 목소리는 Qwen 소희·에이든의 합성 샘플을 다른 모델로 복제한 결과입니다. 자동 검사는 대본 누락과 파형 이상을 확인하며, 자연스러움과 목소리 유사성은 직접 들어보고 판단해 주세요.</p>
+    <p class="muted">Fish S2-Pro는 연구·비상업 평가용입니다. 상업적 사용에는 <a href="https://github.com/fishaudio/fish-speech/blob/main/LICENSE">별도 라이선스</a>가 필요합니다.</p>
+  </section>
+  <section id="cloning" class="panel" aria-labelledby="clone-heading">
+    <p class="eyebrow">VOICE CLONING</p><h2 id="clone-heading">내 녹음을 참고해, 새로운 문장을 읽어요.</h2>
+    <p>보이스 클로닝은 짧은 녹음의 음색과 말투를 참고해 새로운 대본을 읽는 기능입니다. 별도의 모델 학습을 기다릴 필요가 없습니다. 녹음 상태와 모델에 따라 목소리의 유사성은 달라집니다.</p>
+    <ol class="guide">
+      <li><strong>조용한 곳에서 한 문단을 녹음하세요.</strong><p>처음에는 10~20초 정도가 편합니다. 등록 가능한 구간은 3~30초예요. 한 사람만 말하고, 배경 음악·울림·큰 잡음은 피하세요. 본인 또는 사용 허락을 받은 목소리를 사용해 주세요.</p><blockquote>녹음 예시: “안녕하세요. 오늘은 제 목소리로 이야기를 들려드리려고 합니다. 편안한 속도로 또박또박 읽고 있어요. 새로운 문장도 자연스럽게 전해지면 좋겠습니다.”</blockquote></li>
+      <li><strong>목소리 보관함에 파일을 넣으세요.</strong><p>작업실의 ‘목소리 보관함’에서 이름과 녹음을 선택하세요. WAV·MP3·M4A 등 브라우저가 읽는 형식을 지원합니다. 파일은 최대 30MB·5분이며, 사용할 3~30초 구간을 골라 ‘구간 적용 · 미리듣기’를 누르면 형식은 자동으로 맞춥니다. 문장 끝이 잘리지 않았는지 확인하세요.</p></li>
+      <li><strong>녹음 속 문장을 확인하고 등록하세요.</strong><p>‘녹음 대본 자동 인식’을 누른 뒤, 실제 말한 내용과 맞게 수정해 주세요. 여기에는 새로 읽힐 대본이 아니라 <b>녹음에서 말한 문장</b>을 적습니다. 인식이 실패하면 직접 적어도 됩니다.</p></li>
+      <li><strong>내 목소리를 선택하고 새 대본을 입력하세요.</strong><p>‘음성 만들기 → 목소리 변경 · 미리듣기 → 내 목소리’에서 등록한 목소리를 선택하세요. 처음에는 한두 문장으로 생성해 들어보세요. 첫 합성에는 모델 로딩 시간이 걸립니다. 완성된 WAV는 재생하거나 저장할 수 있습니다.</p></li>
+    </ol>
+    <div class="tip"><strong>두 가지 미리듣기를 구별해 주세요.</strong><p>‘원본 미리듣기’는 등록한 녹음이고, ‘한국어 샘플’은 모델이 생성한 음성입니다. 내 목소리의 복제 결과는 새 대본으로 ‘음성 만들기’를 실행해 확인하세요.</p></div>
+    <details><summary>내 목소리를 선택할 수 없거나 결과가 어색해요.</summary><p>Qwen CustomVoice의 공식 화자와 고정 공식 목소리 프리셋은 사용자 녹음으로 바꿀 수 없습니다. ZONOS2 개인 복제나 Qwen Base 등 복제 모델을 선택하세요. 대본과 녹음이 정확히 일치하는지, 소음·음악·다른 화자가 섞이지 않았는지 확인하고 다른 구간을 등록해 비교해 보세요. 잘못 읽은 결과는 그대로 사용하지 말고 다시 생성해 확인하세요.</p></details>
+    <details><summary>등록한 목소리는 어디에 저장되나요?</summary><p>녹음·대본·생성 결과는 이 PC의 VoiceBench 데이터 폴더에 저장됩니다. 모델 다운로드에는 인터넷이 필요하지만 개인 녹음을 업로드해 학습시키지 않습니다. 웹에서 목소리를 바꿔도 외부 API의 개인 기본 목소리는 자동으로 바뀌지 않습니다. 새 PC의 API 기본 목소리는 별도로 설정해야 합니다.</p></details>
+    <a class="button" href="/">작업실에서 내 목소리 등록하기 →</a>
+  </section>
+  <footer>VoiceBench · 샘플과 녹음은 이 PC에 보관됩니다.</footer>
+</main>
+<script src="/welcome.js"></script>
+</body>
+</html>

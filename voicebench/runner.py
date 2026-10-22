@@ -46,6 +46,7 @@ class JobRunner(threading.Thread):
                 """SELECT j.*,p.normalized_text,p.original_text,e.slug,e.name,e.kind,e.version,e.config_json,
                           pr.reference_path,pr.reference_sha256,pr.reference_text,
                           sr.id AS studio_request_id,sr.quality_mode AS studio_quality_mode,
+                          sr.source AS studio_request_source,
                           sr.generation_json AS studio_generation_json,
                           (SELECT COUNT(*) FROM studio_segments total
                            WHERE total.request_id=sr.id) AS request_segment_count,
@@ -198,7 +199,8 @@ class JobRunner(threading.Thread):
             before = system_snapshot()
             sampler.start()
             quality_enabled = self._quality_control_enabled(job)
-            retry_seeds = [
+            fixed_seed = job.get('studio_request_source') == 'external_api'
+            retry_seeds = [] if fixed_seed else [
                 seed for seed in QUALITY_RETRY_SEEDS if seed != int(job["seed"])
             ]
             context, reset_reason = self._continuity_context(job)
@@ -291,7 +293,7 @@ class JobRunner(threading.Thread):
             if not safe_candidates:
                 raise RuntimeError("문맥 연결 검증이 중단되었습니다.")
             selected = choose_best_candidate(safe_candidates)
-            if quality_enabled and job["slug"].startswith("zonos2-") and (
+            if quality_enabled and (fixed_seed or job["slug"].startswith("zonos2-")) and (
                 selected["quality"].get("retry_recommended")
                 or selected["quality"].get("transcription") is None
             ):
@@ -302,7 +304,9 @@ class JobRunner(threading.Thread):
                     {"seed": c["seed"], "path": str(c["path"]), "quality": c["quality"]}
                     for c in candidates
                 ]), encoding="utf-8")
-                raise RuntimeError("ZONOS2 음성 검사를 통과하지 못했습니다. 검사 환경 또는 실패 기록을 확인하세요.")
+                raise RuntimeError(("승인 Seed 음성 검사를 통과하지 못했습니다. 다른 Seed로 자동 대체하지 않습니다. "
+                                    if fixed_seed else "ZONOS2 음성 검사를 통과하지 못했습니다. ")
+                                   +"검사 환경 또는 실패 기록을 확인하세요.")
             selected_seed = int(selected["seed"])
             selected_output_path = output_dir / (
                 f"job-{job['id']}-{job['slug']}-seed-{selected_seed}.wav"
@@ -347,6 +351,7 @@ class JobRunner(threading.Thread):
             else:
                 quality_status = "passed"
             metrics["quality_control"] = {
+                "seed_policy": "fixed_primary_v1" if fixed_seed else "server_retry_seeds",
                 "enabled": quality_enabled,
                 "status": quality_status,
                 "base_seed": int(job["seed"]),

@@ -10,7 +10,7 @@ if str(ROOT) not in sys.path:
 
 from voicebench.config import Paths
 from voicebench.db import Database
-from voicebench.service import Service
+from tools.setup_registration import RegistrationService as Service
 
 SLUG = "voxcpm2-experimental"
 STYLE_PRESETS = {

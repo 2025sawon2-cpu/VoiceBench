@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import difflib
 import os
 import re
 import shutil
@@ -18,6 +19,7 @@ from .korean_numbers import quantity_mismatches
 
 
 QUALITY_RETRY_SEEDS = (10, 42)
+QUALITY_POLICY = 'anchored-terminal-omission-v1'
 _KEEP_TEXT = re.compile(r"[^0-9a-z가-힣]+")
 
 
@@ -75,6 +77,16 @@ def evaluate_candidate(
         and expected.startswith(actual)
         and 0 < len(expected) - len(actual) <= 3
     )
+    blocks = [b for b in difflib.SequenceMatcher(None, expected, actual, autojunk=False).get_matching_blocks() if b.size]
+    last = blocks[-1] if blocks else None
+    # Whole-script CER dilutes a missing closing sentence. Require a unique,
+    # substantial exact anchor at the ASR's end, not just a misspelled suffix.
+    anchored_missing_ending = bool(
+        not ending_match and last and last.size >= 6
+        and last.b + last.size == len(actual)
+        and len(expected) - last.a - last.size >= 4
+        and expected.find(expected[last.a:last.a+last.size], last.a+1) < 0
+    )
     # Scripted emphasis ("천천히 천천히") is not a synthesis defect.
     repeated = bool(
         _adjacent_repetitions(transcription or "") - _adjacent_repetitions(expected_text)
@@ -106,7 +118,7 @@ def evaluate_candidate(
             reasons.append("likely_omission")
         elif len(expected) >= 8 and length_ratio > 1.55:
             reasons.append("likely_repetition")
-        if missing_suffix:
+        if missing_suffix or anchored_missing_ending:
             reasons.append("likely_ending_omission")
         if repeated and length_ratio > 1.12:
             reasons.append("adjacent_repetition")

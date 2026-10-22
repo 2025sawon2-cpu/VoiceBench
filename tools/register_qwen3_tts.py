@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import os
 from copy import deepcopy
 from pathlib import Path
 
@@ -10,7 +11,7 @@ if str(ROOT) not in sys.path:
 
 from voicebench.config import Paths
 from voicebench.db import Database
-from voicebench.service import Service
+from tools.setup_registration import RegistrationService as Service
 from tools.register_continuity import register_continuity_variant
 
 
@@ -24,11 +25,12 @@ def main() -> None:
         raise SystemExit(f"Qwen3-TTS engine Python is missing: {python}")
 
     database = Database(paths.database)
-    database.execute(
-        """DELETE FROM engines WHERE slug='qwen3-tts-06b-fp16'
-           AND NOT EXISTS (SELECT 1 FROM jobs WHERE engine_id=engines.id)"""
-    )
-    database.execute("UPDATE engines SET enabled=0 WHERE slug='qwen3-tts-06b-fp16'")
+    if os.environ.get('VOICEBENCH_PRESERVE_ENGINES') != '1':
+        database.execute(
+            """DELETE FROM engines WHERE slug='qwen3-tts-06b-fp16'
+               AND NOT EXISTS (SELECT 1 FROM jobs WHERE engine_id=engines.id)"""
+        )
+        database.execute("UPDATE engines SET enabled=0 WHERE slug='qwen3-tts-06b-fp16'")
     engine = Service(paths, database).upsert_engine(
         {
             "slug": "qwen3-tts-06b-pascal",

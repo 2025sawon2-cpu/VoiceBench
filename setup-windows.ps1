@@ -1,68 +1,52 @@
 param(
     [switch]$DownloadModels,
+    [switch]$Plan,
+    [switch]$NoBrowser,
+    [int]$GpuIndex = -1,
     [string]$ReferenceWav,
     [string]$ReferenceText
 )
-
 $ErrorActionPreference = 'Stop'
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$harnessPython = Join-Path $root '.venv\Scripts\python.exe'
-$referenceDirectory = Join-Path $root 'data\prepared\ref_voice'
-$selectedWav = Join-Path $referenceDirectory 'selected_reference.wav'
-$selectedText = Join-Path $referenceDirectory 'selected_reference.txt'
-
-function Assert-NativeSuccess([string]$Step) {
-    if ($LASTEXITCODE -ne 0) {
-        throw "$Step failed with exit code $LASTEXITCODE."
-    }
-}
-
-if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
-    throw 'This setup script supports Windows only.'
-}
-
-if (-not (Get-Command py -ErrorAction SilentlyContinue)) {
-    throw 'Python Launcher (py.exe) was not found. Install 64-bit Python 3.10 from python.org.'
-}
-
+$root = $PSScriptRoot
+$python = Join-Path $root '.venv\Scripts\python.exe'
 if (-not (Get-Command nvidia-smi -ErrorAction SilentlyContinue)) {
-    throw 'nvidia-smi was not found. Install a current NVIDIA driver before setting up Qwen3-TTS.'
+    throw 'An NVIDIA GPU and driver are required. Install the driver, then run setup-windows.cmd again.'
 }
-
-if ([bool]$ReferenceWav -ne [bool]$ReferenceText) {
-    throw 'Provide both -ReferenceWav and -ReferenceText, or omit both.'
-}
-
-Set-Location $root
-Write-Host 'Preparing the VoiceBench application environment...'
-& (Join-Path $root 'bootstrap.ps1')
-
-Write-Host 'Preparing the Qwen3-TTS engine environment...'
-& (Join-Path $root 'install-qwen3-tts.ps1') -DownloadModel:$DownloadModels
-
-if ($ReferenceWav -and $ReferenceText) {
-    $sourceWav = (Resolve-Path -LiteralPath $ReferenceWav).Path
-    $sourceText = (Resolve-Path -LiteralPath $ReferenceText).Path
-    if ([IO.Path]::GetExtension($sourceWav).ToLowerInvariant() -ne '.wav') {
-        throw 'ReferenceWav must point to a WAV file.'
+# DownloadModels remains accepted for older instructions. Full download is now the default.
+if (-not (Test-Path -LiteralPath $python)) {
+    $basePython = $null
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        try { $candidate = & py -3.10 -c 'import sys; print(sys.executable)' 2>$null }
+        catch { $candidate = $null }
+        if ($LASTEXITCODE -eq 0 -and $candidate) { $basePython = $candidate.Trim() }
     }
-    New-Item -ItemType Directory -Force -Path $referenceDirectory | Out-Null
-    Copy-Item -LiteralPath $sourceWav -Destination $selectedWav -Force
-    Copy-Item -LiteralPath $sourceText -Destination $selectedText -Force
-    if (-not [IO.File]::ReadAllText($selectedText, [Text.Encoding]::UTF8).Trim()) {
-        throw 'The reference transcript is empty.'
+    $userPython = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python310\python.exe'
+    if (-not $basePython -and (Test-Path -LiteralPath $userPython)) { $basePython = $userPython }
+    if (-not $basePython) {
+        if ($Plan) { throw 'Python 3.10 is required for -Plan. Run setup-windows.cmd to install it.' }
+        if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+            throw 'Install 64-bit Python 3.10 from python.org, then run setup-windows.cmd again.'
+        }
+        Write-Host 'Installing Python 3.10 for the current Windows user...'
+        & winget install --id Python.Python.3.10 --exact --scope user --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $userPython)) {
+            throw 'Python installation failed. Install 64-bit Python 3.10 manually, then retry.'
+        }
+        $basePython = $userPython
     }
-    Write-Host "Installed the local reference voice: $selectedWav"
+    if ($Plan) {
+        $python = $basePython
+    } else {
+        & $basePython -m venv (Join-Path $root '.venv')
+        if ($LASTEXITCODE -ne 0) { throw 'VoiceBench virtual environment creation failed.' }
+    }
 }
-elseif (-not ((Test-Path $selectedWav) -and (Test-Path $selectedText))) {
-    Write-Warning 'The app is installed, but voice cloning remains unavailable until selected_reference.wav and selected_reference.txt are copied into data\prepared\ref_voice.'
-}
-
-Write-Host 'Running the VoiceBench regression suite...'
-& $harnessPython -m unittest discover -s tests -v
-Assert-NativeSuccess 'VoiceBench regression suite'
-
-Write-Host ''
-Write-Host 'VoiceBench setup is complete.' -ForegroundColor Green
-Write-Host 'Local start: .\start.cmd'
-Write-Host 'LAN start (Administrator PowerShell): .\host-lan.cmd'
+$arguments = @((Join-Path $root 'tools\setup_voicebench.py'))
+if ($Plan) { $arguments += '--plan' }
+if ($NoBrowser) { $arguments += '--no-browser' }
+if ($GpuIndex -ge 0) { $arguments += @('--gpu-index', [string]$GpuIndex) }
+if ($ReferenceWav) { $arguments += @('--reference-wav', $ReferenceWav) }
+if ($ReferenceText) { $arguments += @('--reference-text', $ReferenceText) }
+$env:PYTHONUTF8 = '1'
+& $python @arguments
+exit $LASTEXITCODE

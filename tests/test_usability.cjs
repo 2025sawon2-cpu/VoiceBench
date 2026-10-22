@@ -29,3 +29,13 @@ test('offline form submission cannot enqueue a TTS job',async()=>{
  await f.$('#studio-form').onsubmit({preventDefault(){}});
  assert.equal(vm.runInContext('Boolean(app.submitting)',f.context),false);
 });
+
+test('an explicit welcome-page voice is not overwritten by previous session settings',()=>{
+ const f=fixture();
+ f.storage.set('voicebench.reload-settings.v1',JSON.stringify({engine:'zonos',voice:'mine',seed:42,quality:'standard'}));
+ f.$('#studio-engine').value='custom';
+ vm.runInContext("settingsRestored=false;gallery.entryRequested=true;app.voiceId='qwen-sohee';restoreStudioSettings()",f.context);
+ assert.equal(f.$('#studio-engine').value,'custom');
+ assert.equal(vm.runInContext('app.voiceId',f.context),'qwen-sohee');
+ assert.equal(f.$('#studio-text').value,'Keep my draft');
+});

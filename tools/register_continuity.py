@@ -11,7 +11,8 @@ if str(ROOT) not in sys.path:
 
 from voicebench.config import Paths
 from voicebench.db import Database
-from voicebench.service import QWEN_EXPRESSIVE_SLUG, Service
+from voicebench.service import QWEN_EXPRESSIVE_SLUG
+from tools.setup_registration import RegistrationService as Service
 
 CONTINUITY_ENGINE_SLUG = "qwen3-tts-17b-pascal-expressive-continuity"
 

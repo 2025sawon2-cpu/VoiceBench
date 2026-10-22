@@ -16,6 +16,7 @@ from .recordings import validate_voice_clip
 from .config import Paths, DEFAULT_STUDIO_ENGINE_SLUG, local_studio_engine
 from .db import Database
 from .korean_numbers import POLICY as NUMBER_POLICY, normalize_korean_quantities
+from .quality import QUALITY_POLICY
 from .util import atomic_write_bytes, json_dumps, sha256_file, system_snapshot, utc_now
 
 
@@ -794,6 +795,8 @@ class Service:
         fingerprint_data = {
             "version": 8,
             "number_policy": NUMBER_POLICY,
+            "quality_policy": QUALITY_POLICY,
+            "seed_policy": "external-fixed-primary-v1",
             "segmentation_policy": "zonos_shorts_whole_240_v1",
             "input_policy": STUDIO_INPUT_POLICY,
             "text": normalized,

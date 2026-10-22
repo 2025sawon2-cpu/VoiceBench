@@ -5,7 +5,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from voicebench.config import Paths
 from voicebench.db import Database
-from voicebench.service import Service
+from tools.setup_registration import RegistrationService as Service
 from voicebench.voices import QWEN_CUSTOM
 
 def register():

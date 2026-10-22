@@ -55,21 +55,23 @@ Mock 엔진은 하네스 자체를 시험하는 톤 생성기이며 실제 TTS�
 - Python 3.10 64비트와 Python Launcher(`py.exe`)
 - 실제 GPU 엔진 사용 시 NVIDIA 드라이버
 
-현재 PC에는 독립 Python 3.10이 확인되어 있으므로 추가 시스템 설치 없이 실행할 수 있습니다.
+통합 설치기는 Python 3.10이 없을 때 winget으로 현재 사용자용 설치를 시도합니다.
 
-## 새 Windows PC 설치
+## 처음 clone한 PC에서 설치
 
-네 저장소를 한 PC에 함께 설치할 때는 [Hotpost 통합 설치 가이드](https://github.com/dkfdnd/insta_auto/blob/main/docs/windows-install.md)를 먼저 확인하세요. 로컬 API 키·모델·개인 참조 음성은 Git에 포함되지 않습니다.
-
-저장소를 복제한 새 PC에서는 다음 명령으로 애플리케이션, Qwen3-TTS 엔진, 생산 모델과 품질 검사 모델을 설치할 수 있습니다.
+AI 에이전트에게 **“설치해”**라고 말하거나 다음 명령을 실행하세요.
 
 ```powershell
-git clone <저장소-URL> VoiceBench
+git clone https://github.com/dkfdnd/VoiceBench.git
 cd VoiceBench
-.\setup-windows.cmd -DownloadModels
+.\setup-windows.cmd
 ```
 
-개인 레퍼런스 음성은 Git에 포함되지 않습니다. 필요한 파일 복사, LAN 방화벽, MCP/API 설정을 포함한 전체 절차는 [Windows 새 PC 설치 가이드](docs/windows-install.md)를 참고하세요.
+GPU·VRAM·RAM을 확인한 뒤 **Qwen 1.7B/0.6B Base 및 CustomVoice, ZONOS2, VoxCPM2, Fish S2-Pro, Chatterbox V3와 Whisper Base**를 준비합니다. ZONOS2 양자화와 CUDA 빌드는 PC에 맞춰 선택합니다. 한국어 샘플 22개를 실제 생성·검사한 뒤 **http://127.0.0.1:8765/welcome.html**을 열어 샘플 재생과 보이스 클로닝 안내를 제공합니다. 자동 재생이 차단되면 ‘전체 샘플 듣기’를 누르세요.
+
+개인 녹음 없이 공식·공용 목소리로 시작할 수 있습니다. 내 목소리는 **목소리 보관함 → 3~30초 구간 선택 → 녹음 대본 확인 → 등록** 순서로 추가합니다. 전체 샘플이 통과하지 못하면 준비 미완료로 표시하며 같은 설치 명령으로 재시도할 수 있습니다. 기존 목소리와 설정은 보존됩니다.
+
+Windows/NVIDIA GPU가 필요하며 첫 전체 설치에는 여유 공간 80GB 이상을 검사합니다. 작은 GPU에서는 일부 대형 모델이 실행되지 않을 수 있습니다. **PC 선택 기준, 실패 복구, 내 목소리 등록, LAN/API 연결**은 [설치와 첫 사용 가이드](docs/windows-install.md)를 참고하세요. 설치 없이 진단하려면 `setup-windows.cmd -Plan`을 실행합니다.
 
 ## 기존 PC 최초 실행
 
@@ -149,7 +151,7 @@ PyTorch 2.6.0/CUDA 12.6 격리 환경을 설치하고 Qwen3-TTS 0.6B 및 1.7B �
 .\install-voxcpm2.cmd
 ```
 
-전용 `.runtime/engines/voxcpm2/venv`에 VoxCPM 2.0.3과 PyTorch 2.6.0/CUDA 12.6을 설치하고, 고정된 모델 리비전을 약 5GB 다운로드한 뒤 엔진을 등록합니다. Studio와 벤치마크에서 `VoxCPM2 2B · 실험용 음성 복제`를 선택하세요. 기본 모델과 외부 API는 기존 Qwen 설정을 유지합니다.
+전용 `.runtime/engines/voxcpm2/venv`에 VoxCPM 2.0.3과 PyTorch 2.6.0/CUDA 12.6을 설치하고, 고정된 모델 리비전을 약 5GB 다운로드한 뒤 엔진을 등록합니다. Studio와 벤치마크에서 `VoxCPM2 2B · 실험용 음성 복제`를 선택하세요. 기존 기본 모델과 외부 API 설정은 유지합니다.
 
 참조 WAV와 정확한 대본을 함께 사용하는 복제 방식입니다. 공식 기본값인 CFG 2.0, 추론 10단계와 BF16/SDPA를 사용하며 48kHz PCM WAV를 출력합니다. Windows 기본 경로에서는 `torch.compile`을 끕니다. 참조 음성 정제나 텍스트 정규화는 추가로 적용하지 않습니다.
 
